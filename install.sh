@@ -1,28 +1,25 @@
-#!/bin/bash
-# RAG API – One-liner installer
+#!/usr/bin/env bash
+# RAG API – Installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
-set -e
+set -euo pipefail
 
-BASE="https://raw.githubusercontent.com/duongel/rag-api/master"
-DIR="${RAG_API_DIR:-rag-api}"
+exec < /dev/tty
 
-command -v curl > /dev/null 2>&1 || { echo "❌ curl is required but not installed." >&2; exit 1; }
-command -v docker > /dev/null 2>&1 || { echo "❌ docker is required but not installed." >&2; exit 1; }
+BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
-echo "📦 Installing RAG API into ./$DIR"
-mkdir -p "$DIR"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/rag-api}"
 
-for f in \
-  docker-compose.yml \
-  docker-compose.host.yml \
-  docker-compose.obsidian.yml \
-  docker-compose.paperless.yml \
-  start.sh
-do
-  curl -fsSL "$BASE/$f" -o "$DIR/$f"
-done
+command -v docker >/dev/null 2>&1 || { echo -e "${RED}❌ Docker not found.${NC}"; exit 1; }
+docker info >/dev/null 2>&1       || { echo -e "${RED}❌ Docker is not running.${NC}"; exit 1; }
+command -v git >/dev/null 2>&1    || { echo -e "${RED}❌ Git not found.${NC}"; exit 1; }
 
-chmod +x "$DIR/start.sh"
-echo "✅ Files downloaded. Starting setup..."
-echo ""
-cd "$DIR" && bash start.sh
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  echo -e "${BOLD}Updating existing installation in ${INSTALL_DIR}...${NC}"
+  git -C "$INSTALL_DIR" pull --rebase
+else
+  echo -e "${BOLD}Cloning into ${INSTALL_DIR}...${NC}"
+  git clone https://github.com/duongel/rag-api.git "$INSTALL_DIR"
+fi
+
+echo -e "${GREEN}✅ Ready${NC}"
+exec "$INSTALL_DIR/start.sh" "$@"

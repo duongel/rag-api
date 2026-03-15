@@ -1,5 +1,8 @@
 # RAG API
 
+[![Release](https://img.shields.io/github/v/release/duongel/rag-api)](https://github.com/duongel/rag-api/releases)
+[![Docker Image](https://ghcr.io/duongel/rag-api)](https://github.com/duongel/rag-api/pkgs/container/rag-api)
+
 Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in Docker.
 
 ## Architecture
@@ -25,7 +28,17 @@ All data-bearing endpoints require a bearer token by default.
 - Docker Engine (or Docker Desktop on macOS) running
 - `curl`
 
-## Setup
+## Installation
+
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
+```
+
+Clones the repo to `~/rag-api` and runs the interactive setup. Safe to re-run — updates an existing installation.
+
+### Manual
 
 ### One-liner (recommended)
 
@@ -44,7 +57,7 @@ chmod +x start.sh
 ./start.sh
 ```
 
-The script asks:
+The setup script asks:
 
 1. **Path to vault** – directory containing the `.md` files
 2. **External Ollama?** – if Ollama is already running elsewhere, provide its Docker service/container name on the shared network (and optionally override the URL)
@@ -56,6 +69,29 @@ Then:
 - Ollama starts (first run: pulls `nomic-embed-text`, ~1 min) unless you use an existing external Ollama
 - `rag-api` starts and indexing begins in the background
 - macOS notification + terminal output when ready
+
+### Docker image
+
+Pre-built multi-arch images (`linux/amd64`, `linux/arm64`) are published automatically on every release:
+
+```bash
+docker pull ghcr.io/duongel/rag-api:latest
+```
+
+Available tags: `latest`, `1.0.0`, `1.0`, …
+
+> **Note:** After the first automated release, the package must be set to **public** once:  
+> GitHub → Packages → `rag-api` → Package settings → Change visibility → Public
+
+## Updates
+
+```bash
+# Re-run the installer – pulls latest code and restarts
+curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
+
+# Or manually
+cd ~/rag-api && git pull && ./start.sh
+```
 
 ## Access Modes
 
