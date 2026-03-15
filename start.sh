@@ -427,8 +427,17 @@ if [[ "$LOCAL_OLLAMA" == true ]]; then
 fi
 
 # ── Start rag-api ─────────────────────────────────────────────────────────
-echo "🐳 Building & starting rag-api..."
-_compose up -d --build "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
+# When a Dockerfile is present (git clone) we always --build so that
+# code changes from git pull are picked up automatically.
+# Lightweight installs via install.sh have no Dockerfile; they simply
+# pull the pre-built image from the container registry.
+if [[ -f Dockerfile ]]; then
+  echo "🐳 Building & starting rag-api..."
+  _compose up -d --build "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
+else
+  echo "🐳 Starting rag-api..."
+  _compose up -d --pull always "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
+fi
 echo ""
 
 # ── Wait for indexing (Ctrl+C skips, containers keep running) ────────────
