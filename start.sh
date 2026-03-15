@@ -242,7 +242,7 @@ fi
 
 # Ensure the Docker network exists before starting containers.
 # This is a no-op if the network already exists (e.g. created by n8n).
-docker network create "${DOCKER_NETWORK:-rag-network}" 2>/dev/null || true
+docker network create "${DOCKER_NETWORK:-rag-network}" > /dev/null 2>&1 || true
 
 # ── Start Ollama & pull model (local only) ────────────────────────────────
 if [[ "$LOCAL_OLLAMA" == true ]]; then
