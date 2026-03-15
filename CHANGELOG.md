@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/duongel/rag-api/compare/v1.0.0...v1.1.0) (2026-03-15)
+
+
+### Features
+
+* distribution optimization ([#4](https://github.com/duongel/rag-api/issues/4)) ([7b99b92](https://github.com/duongel/rag-api/commit/7b99b9247c7459b9f6af6fb1116e35e940421846))
+
 # 1.0.0 (2026-03-15)
 
 

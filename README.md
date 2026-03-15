@@ -46,6 +46,16 @@ Clones the repo to `~/rag-api` and runs the interactive setup. Safe to re-run â€
 
 ### Manual (advanced / development)
 
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
+```
+
+This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step â€“ the pre-built image is pulled from GHCR automatically.
+
+### Manual (advanced / development)
+
 ```bash
 git clone git@github.com:duongel/rag-api.git
 cd rag-api
