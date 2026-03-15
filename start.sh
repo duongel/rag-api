@@ -160,7 +160,17 @@ _run_setup() {
     fi
   fi
 
-  # 4. Write .env
+  # 4. Docker network (optional)
+  echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
+  read -r DOCKER_NETWORK
+  if [[ -n "$DOCKER_NETWORK" ]]; then
+    echo -e "   ${GREEN}✓${NC} Will join network: $DOCKER_NETWORK\n"
+  else
+    DOCKER_NETWORK=""
+    echo -e "   ${GREEN}✓${NC} Using default network: rag-network\n"
+  fi
+
+  # 5. Write .env
   cat > .env <<EOF
 VAULT_PATH=$VAULT_PATH
 OLLAMA_URL=$OLLAMA_URL
@@ -171,6 +181,7 @@ HOST_PORT=$HOST_PORT
 PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
+DOCKER_NETWORK=$DOCKER_NETWORK
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
   if [[ "$AUTH_REQUIRED" == "true" ]]; then
@@ -204,6 +215,7 @@ if [[ -f .env ]]; then
       ACCESS_MODE="${ACCESS_MODE:-host}"
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
+      DOCKER_NETWORK="${DOCKER_NETWORK:-}"
       if [[ "$ACCESS_MODE" == "host" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
