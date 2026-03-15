@@ -355,8 +355,8 @@ if [[ "$LOCAL_OLLAMA" == true ]]; then
 fi
 
 # ── Start rag-api ─────────────────────────────────────────────────────────
-echo "🐳 Building and starting rag-api..."
-_compose up -d --build "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
+echo "🐳 Starting rag-api..."
+_compose up -d "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
 echo ""
 
 # ── Wait for indexing (Ctrl+C skips, containers keep running) ────────────

@@ -8,23 +8,34 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 ┌────────────────────┐     ┌──────────────────────┐
 │   rag-api          │────▶│   ollama             │
 │   (Python/FastAPI) │     │   (nomic-embed-text) │
-│   + ChromaDB       │     │   Apple Silicon GPU  │
+│   + ChromaDB       │     │   GPU (optional)     │
 │   + File Watcher   │     └──────────────────────┘
-│                    │◀── /vault (read-only mount)
+│                    │◄── /vault (read-only mount)
 └────────────────────┘
         │
    rag-network (or any external Docker network)
 ```
 
-All services run inside a Docker network. Host port publishing is optional.
+All services run inside a Docker network. Host port publishing is optional.  
 All data-bearing endpoints require a bearer token by default.
 
 ## Requirements
 
 - Linux (x86_64 or arm64) or macOS
 - Docker Engine (or Docker Desktop on macOS) running
+- `curl`
 
 ## Setup
+
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
+```
+
+This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step – the pre-built image is pulled from GHCR automatically.
+
+### Manual (advanced / development)
 
 ```bash
 git clone git@github.com:duongel/rag-api.git
@@ -141,5 +152,6 @@ It also includes lean OpenAI/Anthropic-compatible tool definitions and a compati
 
 ## Notes
 
-- **GPU**: Ollama uses the Metal GPU on Apple Silicon.
-- **File Watcher**: Uses `PollingObserver` (every 5 sec) because inotify events are unreliable over Docker bind-mounts on macOS.
+- **Image**: Pre-built and published to `ghcr.io/duongel/rag-api` on every release. No local build required.
+- **GPU**: Ollama uses the Metal GPU on Apple Silicon; on Linux it uses CUDA or CPU depending on your Ollama setup.
+- **File Watcher**: Uses `InotifyObserver` on Linux (real kernel events, zero overhead). Falls back to `PollingObserver` on macOS.

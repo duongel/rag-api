@@ -10,7 +10,8 @@ services:
     restart: unless-stopped
 
   rag-api:
-    build: .
+    image: ghcr.io/duongel/rag-api:latest
+    build: .  # only used locally: docker compose build / up --build
     volumes:
       - chroma_data:/app/data
     expose:
