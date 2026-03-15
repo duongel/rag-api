@@ -1,8 +1,9 @@
 """File watcher for the Obsidian vault and the Paperless archive directory.
 
-Observer selection:
-  - Linux  → InotifyObserver  (real kernel events, zero overhead, works on bind mounts)
-  - macOS  → PollingObserver  (inotify unavailable inside Docker Desktop VMs)
+Observer selection (in priority order):
+  1. WATCHER_POLLING=true  → PollingObserver  (forced; use for Docker Desktop on macOS)
+  2. Linux, inotify available → InotifyObserver  (real kernel events, zero overhead)
+  3. Fallback               → PollingObserver
 """
 
 import logging
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
 
-from .config import VAULT_PATH, PAPERLESS_ARCHIVE_PATH, POLL_INTERVAL
+from .config import VAULT_PATH, PAPERLESS_ARCHIVE_PATH, POLL_INTERVAL, WATCHER_POLLING
 from .indexer import Indexer
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 def _make_observer():
     """Return the best available observer for the current platform."""
+    if WATCHER_POLLING:
+        logger.info("WATCHER_POLLING=true – using PollingObserver (interval: %ds)", POLL_INTERVAL)
+        from watchdog.observers.polling import PollingObserver
+        return PollingObserver(timeout=POLL_INTERVAL)
     if platform.system() == "Linux":
         try:
             from watchdog.observers.inotify import InotifyObserver

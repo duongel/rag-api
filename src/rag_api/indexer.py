@@ -145,7 +145,15 @@ class Indexer:
         """Remove all chunks belonging to *file_path* from the index."""
         doc_key = self._doc_key(source, file_path)
         try:
+            # Current-style chunks: have an explicit source field.
             self.collection.delete(where={"file_path": file_path, "source": source})
+        except Exception:
+            pass
+        try:
+            # Legacy chunks (pre-source schema): stored without a source field.
+            # Deleting them on first reindex prevents duplicate search hits after
+            # upgrading from an older chroma_data volume.
+            self.collection.delete(where={"file_path": {"$eq": file_path}})
         except Exception:
             pass
         self._file_hashes.pop(doc_key, None)

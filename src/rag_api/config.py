@@ -32,4 +32,9 @@ CHUNK_DISCARD_LENGTH = 5
 # Used as fallback on macOS where inotify is unavailable inside Docker bind mounts.
 POLL_INTERVAL = 5
 
+# Set WATCHER_POLLING=true to force PollingObserver even on Linux.
+# Needed for Docker Desktop on macOS, where the container reports Linux but
+# inotify events are unreliable over the virtio/bind-mount layer.
+WATCHER_POLLING = os.environ.get("WATCHER_POLLING", "false").lower() in {"1", "true", "yes", "on"}
+
 API_PORT = 8080

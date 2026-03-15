@@ -27,6 +27,7 @@ services:
       PAPERLESS_URL: "${PAPERLESS_URL:-}"
       PAPERLESS_TOKEN: "${PAPERLESS_TOKEN:-}"
       PAPERLESS_PUBLIC_URL: "${PAPERLESS_PUBLIC_URL:-}"
+      WATCHER_POLLING: "${WATCHER_POLLING:-false}"
     restart: unless-stopped
     networks:
       - rag-network
