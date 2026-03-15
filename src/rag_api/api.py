@@ -7,7 +7,16 @@ from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from .config import API_BEARER_TOKEN, AUTH_REQUIRED, PUBLIC_URL
+from urllib.parse import quote
+
+from .config import (
+    API_BEARER_TOKEN,
+    AUTH_REQUIRED,
+    PUBLIC_URL,
+    PAPERLESS_ARCHIVE_PATH,
+    PAPERLESS_PUBLIC_URL,
+    DATA_SOURCES,
+)
 
 # SKILL.md is copied into /app/ by the Dockerfile; fall back to repo root for local dev
 _SKILL_PATH = next(
@@ -71,6 +80,8 @@ class SearchResult(BaseModel):
     content: str
     score: float = 0.0
     match_type: str = ""
+    source: str = "obsidian"  # "obsidian" | "paperless"
+    source_url: str = ""  # direct link to the document; empty when no public URL is configured
 
 
 class SearchResponse(BaseModel):
@@ -86,6 +97,8 @@ class NoteResponse(BaseModel):
 class StatsResponse(BaseModel):
     total_chunks: int
     total_files: int
+    obsidian_files: int
+    paperless_files: int
     link_graph_edges: int
 
 
@@ -93,11 +106,34 @@ class StatusResponse(BaseModel):
     indexing: bool
     indexed_files: int
     total_files: int
+    obsidian_indexed: int = 0
+    obsidian_total: int = 0
+    paperless_indexed: int = 0
+    paperless_total: int = 0
 
 
 class ReindexResponse(BaseModel):
     updated_files: int
     message: str
+
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+def _enrich_source_url(result: dict) -> dict:
+    """Add a source_url to a result dict so callers can jump directly to the document."""
+    source = result.get("source", "obsidian")
+    file_path = result.get("file_path", "")
+    if source == "paperless" and PAPERLESS_PUBLIC_URL:
+        stem = Path(file_path).stem
+        if stem.isdigit():
+            result["source_url"] = (
+                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(stem)}/details"
+            )
+    elif source == "obsidian":
+        result["source_url"] = (
+            f"{PUBLIC_URL.rstrip('/')}/note?path={quote(file_path)}"
+        )
+    return result
 
 
 # ── endpoints ────────────────────────────────────────────────────────────
@@ -149,6 +185,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
     results = searcher.semantic_search(req.query, req.top_k, req.expand_links)
     if req.min_score > 0:
         results = [r for r in results if r["score"] >= req.min_score]
+    results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 
 
@@ -168,6 +205,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
     results = searcher.keyword_search(req.query, req.top_k)
+    results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 
 
@@ -190,9 +228,13 @@ def get_note(
 
 @app.post("/reindex", response_model=ReindexResponse, summary="Trigger full reindex")
 def reindex(_: None = Security(require_auth)):
-    """Re-scans the entire vault and updates changed files in the index."""
+    """Re-scans the vault and Paperless archive (if configured) and updates changed files."""
     global indexing_status
     indexing_status = {"indexing": True, "indexed_files": 0, "total_files": 0}
-    count = indexer.full_reindex()
+    count = 0
+    if DATA_SOURCES in ("obsidian", "all"):
+        count += indexer.full_reindex()
+    if DATA_SOURCES in ("paperless", "all") and PAPERLESS_ARCHIVE_PATH:
+        count += indexer.full_reindex(base_path=PAPERLESS_ARCHIVE_PATH, source="paperless")
     indexing_status = {"indexing": False, "indexed_files": len(indexer._file_hashes), "total_files": len(indexer._file_hashes)}
     return ReindexResponse(updated_files=count, message=f"Reindexed {count} files")

@@ -1,8 +1,6 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: ollama
-    platform: linux/arm64   # Apple Silicon only – skip with external Ollama
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -13,20 +11,21 @@ services:
 
   rag-api:
     build: .
-    container_name: rag-api
     volumes:
-      - ${VAULT_PATH}:/obsidian:ro
       - chroma_data:/app/data
     expose:
       - "8080"
     environment:
       OLLAMA_URL: "${OLLAMA_URL:-http://ollama:11434}"
-      VAULT_PATH: "/obsidian"
       CHROMA_PATH: "/app/data/chroma"
       EMBED_MODEL: "nomic-embed-text"
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8484}"
       AUTH_REQUIRED: "${AUTH_REQUIRED:-true}"
       API_BEARER_TOKEN: "${API_BEARER_TOKEN}"
+      DATA_SOURCES: "${DATA_SOURCES:-all}"
+      PAPERLESS_URL: "${PAPERLESS_URL:-}"
+      PAPERLESS_TOKEN: "${PAPERLESS_TOKEN:-}"
+      PAPERLESS_PUBLIC_URL: "${PAPERLESS_PUBLIC_URL:-}"
     restart: unless-stopped
     networks:
       - rag-network
