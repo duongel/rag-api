@@ -13,49 +13,78 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 │                    │◀── /vault (read-only mount)
 └────────────────────┘
         │
-   rag-network
+   rag-network (or any external Docker network)
 ```
 
-All services run inside the Docker network `rag-network` by default. Host port publishing is optional and enabled only through `docker-compose.host.yml`.
-
-All data-bearing endpoints require a bearer token by default. Only `/health`, `/docs`, `/openapi.json`, and `/skill` are intended to be reachable without authentication. For trusted same-network containers, you can explicitly choose internal-only mode and disable auth during setup.
+All services run inside a Docker network. Host port publishing is optional.
+All data-bearing endpoints require a bearer token by default.
 
 ## Requirements
 
-- macOS with Apple Silicon (M1/M2/M3/M4)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) running
+- macOS with Apple Silicon
+- Docker environment ([Colima](https://github.com/abiosoft/colima) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)) running
 
 ## Setup
 
 ```bash
-git clone <repo-url>
+git clone git@github.com:duongel/rag-api.git
 cd rag-api
 chmod +x start.sh
 ./start.sh
 ```
 
 The script asks:
+
 1. **Path to vault** – directory containing the `.md` files
-2. **External Ollama?** – if Ollama is already running, its URL can be provided
-3. **Publish API on the host?** – choose `No` to keep `rag-api` reachable only inside Docker
-4. **Require bearer token in internal-only mode?** – optional when only trusted containers share the network
+2. **External Ollama?** – if Ollama is already running elsewhere, provide its URL
+3. **Publish API on the host?** – `No` keeps rag-api reachable only inside Docker; `Yes` exposes it on `127.0.0.1:8484`
+4. **Require bearer token?** – prompted for both modes; see access modes below
+5. **External Docker network?** – name of an existing network to join (e.g. `npm-net`); leave empty to use the default `rag-network`
 
 Then:
-- Ollama container starts (first run: pulls `nomic-embed-text`, ~1 min)
-- `rag-api` starts either on the internal Docker network only or on `http://127.0.0.1:8484`
-- Indexing runs in the background – macOS notification + terminal output when done
-- A random API bearer token is generated and stored in `.env` whenever auth is enabled
+- Ollama starts (first run: pulls `nomic-embed-text`, ~1 min)
+- `rag-api` starts and indexing begins in the background
+- macOS notification + terminal output when ready
 
-Set the token once in your shell before calling protected endpoints:
+## Access Modes
+
+| Mode | Host port | Auth | `.env` |
+|---|---|---|---|
+| Internal, no auth | ✗ | ✗ | `ACCESS_MODE=internal` `AUTH_REQUIRED=false` |
+| Internal, token | ✗ | ✓ | `ACCESS_MODE=internal` `AUTH_REQUIRED=true` |
+| Host, token | ✓ | ✓ | `ACCESS_MODE=host` `AUTH_REQUIRED=true` |
+| Host, no auth | ✓ | ✗ | `ACCESS_MODE=host` `AUTH_REQUIRED=false` ⚠️ testing only |
+
+Set the token once in your shell when auth is enabled:
 
 ```bash
 export API_BEARER_TOKEN='<your-token>'
 ```
 
+## n8n Integration (same Docker host)
+
+If n8n runs on the same machine, connect rag-api to its network during setup (e.g. `npm-net`) and choose internal mode without auth:
+
+```env
+ACCESS_MODE=internal
+AUTH_REQUIRED=false
+DOCKER_NETWORK=npm-net
+```
+
+n8n then reaches rag-api directly – no exposed port, no token required:
+
+```
+http://rag-api:8080/search
+http://rag-api:8080/keyword-search
+http://rag-api:8080/note?path=...
+```
+
+To keep auth even on the internal network, set `AUTH_REQUIRED=true` and pass the bearer token from n8n.
+
 ## Testing
 
 ```bash
-# Health check
+# Health check (no auth required)
 curl -s http://localhost:8484/health
 
 # Indexing status
@@ -96,27 +125,9 @@ docker compose down
 docker compose down -v
 ```
 
-## Internal-only Mode for n8n
-
-If `n8n` runs on the same machine in Docker, choose internal-only mode during setup or set this in `.env`:
-
-```bash
-ACCESS_MODE=internal
-AUTH_REQUIRED=false
-DOCKER_NETWORK=rag-network
-```
-
-Then start `n8n` on the same Docker network and call:
-
-```text
-http://rag-api:8080
-```
-
-If you want internal-only mode but still keep authentication, set `AUTH_REQUIRED=true` and send the same bearer token from `n8n`.
-
 ## Agent Skill
 
-[`SKILL.md`](./SKILL.md) documents all endpoints with authenticated curl examples.
+[`SKILL.md`](./SKILL.md) documents all endpoints with curl examples.
 It can be passed as context to any agent (OpenAI, Anthropic, Copilot, …).
 It also includes lean OpenAI/Anthropic-compatible tool definitions and a compatibility matrix – no MCP required.
 
