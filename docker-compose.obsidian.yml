@@ -1,0 +1,8 @@
+# Override file: mounts the Obsidian vault into rag-api.
+# Added automatically by start.sh when Obsidian indexing is enabled.
+services:
+  rag-api:
+    volumes:
+      - ${VAULT_PATH}:/obsidian:ro
+    environment:
+      VAULT_PATH: "/obsidian"
