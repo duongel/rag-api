@@ -1,0 +1,7 @@
+# Override file: publishes rag-api on the host interface.
+# Used automatically by start.sh when ACCESS_MODE=host.
+# Do not use this file in internal-only deployments.
+services:
+  rag-api:
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8484}:8080"

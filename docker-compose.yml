@@ -1,0 +1,41 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    platform: linux/arm64
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - rag-network
+    profiles:
+      - local-ollama
+    restart: unless-stopped
+
+  rag-api:
+    build: .
+    container_name: rag-api
+    volumes:
+      - ${VAULT_PATH}:/obsidian:ro
+      - chroma_data:/app/data
+    expose:
+      - "8080"
+    environment:
+      OLLAMA_URL: "${OLLAMA_URL:-http://ollama:11434}"
+      VAULT_PATH: "/obsidian"
+      CHROMA_PATH: "/app/data/chroma"
+      EMBED_MODEL: "nomic-embed-text"
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8484}"
+      AUTH_REQUIRED: "${AUTH_REQUIRED:-true}"
+      API_BEARER_TOKEN: "${API_BEARER_TOKEN}"
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+volumes:
+  chroma_data:
+  ollama_data:
+
+networks:
+  rag-network:
+    external: true
+    name: "${DOCKER_NETWORK:-rag-network}"

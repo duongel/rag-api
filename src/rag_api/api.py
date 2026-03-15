@@ -1,0 +1,198 @@
+"""FastAPI REST API for the RAG API."""
+
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Query, Security, status
+from fastapi.responses import PlainTextResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+from .config import API_BEARER_TOKEN, AUTH_REQUIRED, PUBLIC_URL
+
+# SKILL.md is copied into /app/ by the Dockerfile; fall back to repo root for local dev
+_SKILL_PATH = next(
+    (p for p in [Path("/app/SKILL.md"), Path(__file__).parents[2] / "SKILL.md"] if p.exists()),
+    None,
+)
+
+app = FastAPI(
+    title="RAG API",
+    description=(
+        "Local RAG search over an Obsidian vault and Paperless-NGX documents. "
+        "Supports semantic search with graph-boosted ranking (wikilinks, backlinks, tags) "
+        "and exact keyword search. "
+        f"Fetch the full agent skill at {PUBLIC_URL}/skill"
+    ),
+    version="2.0.0",
+    servers=[{"url": PUBLIC_URL, "description": "RAG API"}],
+)
+
+# Injected at startup by main.py
+indexer = None  # type: ignore[assignment]
+searcher = None  # type: ignore[assignment]
+indexing_status: dict = {"indexing": True, "indexed_files": 0, "total_files": 0}
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_auth(
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> None:
+    """Protect data-bearing endpoints when running outside a trusted local setup."""
+    if not AUTH_REQUIRED:
+        return
+
+    if not API_BEARER_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication is enabled but API_BEARER_TOKEN is not configured.",
+        )
+
+    if credentials is None or credentials.credentials != API_BEARER_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# ── request / response models ────────────────────────────────────────────
+
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    expand_links: bool = True
+    min_score: float = 0.0  # filter results below this threshold
+
+
+class SearchResult(BaseModel):
+    file_path: str
+    section: str = ""
+    content: str
+    score: float = 0.0
+    match_type: str = ""
+
+
+class SearchResponse(BaseModel):
+    results: list[SearchResult]
+    count: int
+
+
+class NoteResponse(BaseModel):
+    file_path: str
+    content: str
+
+
+class StatsResponse(BaseModel):
+    total_chunks: int
+    total_files: int
+    link_graph_edges: int
+
+
+class StatusResponse(BaseModel):
+    indexing: bool
+    indexed_files: int
+    total_files: int
+
+
+class ReindexResponse(BaseModel):
+    updated_files: int
+    message: str
+
+
+# ── endpoints ────────────────────────────────────────────────────────────
+
+
+@app.get("/skill", response_class=PlainTextResponse, include_in_schema=False)
+def get_skill():
+    """Returns the agent skill documentation as Markdown (for linking to agents)."""
+    if _SKILL_PATH is None:
+        raise HTTPException(status_code=404, detail="SKILL.md not found")
+    content = _SKILL_PATH.read_text(encoding="utf-8")
+    content = content.replace("http://localhost:8484", PUBLIC_URL)
+    return PlainTextResponse(content, media_type="text/markdown")
+
+
+@app.get("/health", summary="Health check")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/status", response_model=StatusResponse, summary="Indexing status")
+def status(_: None = Security(require_auth)):
+    """Returns whether the background indexing is still running and how many files are indexed so far."""
+    return indexing_status
+
+
+@app.get("/stats", response_model=StatsResponse, summary="Vault statistics")
+def stats(_: None = Security(require_auth)):
+    """Total chunks, files, and number of wikilink edges in the graph."""
+    return indexer.get_stats()
+
+
+@app.post(
+    "/search",
+    response_model=SearchResponse,
+    summary="Semantic search",
+    description=(
+        "Embeds the query and returns the most similar note chunks. "
+        "Results are graph-boosted: notes connected via wikilinks, backlinks, or shared tags "
+        "are ranked higher when they are strongly linked to top semantic matches.\n\n"
+        "`match_type` values: `semantic` | `link_1` | `backlink` | `tag` | `link_2`\n\n"
+        "**Use for:** conceptual questions, topics, explanations.\n\n"
+        "**Do NOT use for:** abbreviations, URLs, exact class/enum names → use `/keyword-search`.\n\n"
+        "Set `min_score: 0.70` to suppress low-confidence results."
+    ),
+)
+def search(req: SearchRequest, _: None = Security(require_auth)):
+    """Semantic similarity search across all indexed notes."""
+    results = searcher.semantic_search(req.query, req.top_k, req.expand_links)
+    if req.min_score > 0:
+        results = [r for r in results if r["score"] >= req.min_score]
+    return SearchResponse(results=results, count=len(results))
+
+
+@app.post(
+    "/keyword-search",
+    response_model=SearchResponse,
+    summary="Keyword search",
+    description=(
+        "Case-insensitive exact-text search across filenames and note content.\n\n"
+        "**Use for:** abbreviations (`VPN`, `NVR`, `PoE`), hostnames (`homeassistant`, `pihole`), "
+        "IP addresses, port numbers, model names (`USG-3P`), version strings (`v3.2.1`), "
+        "config keys (`VAULT_PATH`), class names, enum values, "
+        "or any query where the exact string must appear in the note.\n\n"
+        "**Do NOT use for:** conceptual questions, topics, explanations → use `/search`."
+    ),
+)
+def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
+    """Exact keyword search in filenames and note content."""
+    results = searcher.keyword_search(req.query, req.top_k)
+    return SearchResponse(results=results, count=len(results))
+
+
+@app.get(
+    "/note",
+    response_model=NoteResponse,
+    summary="Get full note",
+    description="Returns the complete raw Markdown content of a single note by its relative vault path.",
+)
+def get_note(
+    path: str = Query(..., description="Relative path to the note, e.g. Projects/Home/Heating.md"),
+    _: None = Security(require_auth),
+):
+    """Return the full Markdown content of a single note."""
+    result = searcher.get_note(path)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Note not found: {path}")
+    return result
+
+
+@app.post("/reindex", response_model=ReindexResponse, summary="Trigger full reindex")
+def reindex(_: None = Security(require_auth)):
+    """Re-scans the entire vault and updates changed files in the index."""
+    global indexing_status
+    indexing_status = {"indexing": True, "indexed_files": 0, "total_files": 0}
+    count = indexer.full_reindex()
+    indexing_status = {"indexing": False, "indexed_files": len(indexer._file_hashes), "total_files": len(indexer._file_hashes)}
+    return ReindexResponse(updated_files=count, message=f"Reindexed {count} files")
