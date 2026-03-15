@@ -294,8 +294,10 @@ if [[ -f .env ]]; then
       # Load values from existing .env
       _cli_data_sources="$DATA_SOURCES"
       set -a; source .env; set +a
-      # CLI flag always wins over the stored value
-      [[ "$_cli_data_sources" != "all" ]] && DATA_SOURCES="$_cli_data_sources"
+      # CLI flag always wins over the stored value.
+      # A bare invocation (no flag → "all") also resets the stored value so that
+      # e.g. a previous --obsidian-only run doesn't silently stay obsidian-only.
+      DATA_SOURCES="$_cli_data_sources"
       ACCESS_MODE="${ACCESS_MODE:-host}"
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
@@ -315,6 +317,8 @@ if [[ -f .env ]]; then
         echo -e "${YELLOW}⚠️  No API token found in .env – a new token was added.${NC}"
         echo -e "   ${BOLD}${API_BEARER_TOKEN}${NC}\n"
       fi
+      # Persist DATA_SOURCES back to .env so the effective value is always visible
+      sed -i.bak "s|^DATA_SOURCES=.*|DATA_SOURCES=${DATA_SOURCES}|" .env && rm -f .env.bak
       if [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]]; then
         LOCAL_OLLAMA=true
       else
