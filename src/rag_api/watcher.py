@@ -19,19 +19,36 @@ from .indexer import Indexer
 logger = logging.getLogger(__name__)
 
 
+def _is_docker_desktop() -> bool:
+    """Return True when running inside Docker Desktop on macOS.
+
+    Docker Desktop uses LinuxKit as its VM kernel; the release string contains
+    'linuxkit' or 'docker-desktop'. Detecting this avoids forcing users to set
+    WATCHER_POLLING=true manually.
+    """
+    try:
+        osrelease = Path("/proc/sys/kernel/osrelease").read_text().strip().lower()
+        return "linuxkit" in osrelease or "docker-desktop" in osrelease
+    except Exception:
+        return False
+
+
 def _make_observer():
     """Return the best available observer for the current platform."""
     if WATCHER_POLLING:
         logger.info("WATCHER_POLLING=true – using PollingObserver (interval: %ds)", POLL_INTERVAL)
         from watchdog.observers.polling import PollingObserver
         return PollingObserver(timeout=POLL_INTERVAL)
-    if platform.system() == "Linux":
+    if platform.system() == "Linux" and not _is_docker_desktop():
         try:
             from watchdog.observers.inotify import InotifyObserver
+            logger.info("Using InotifyObserver (native Linux)")
             return InotifyObserver()
         except Exception:
             pass
     from watchdog.observers.polling import PollingObserver
+    if _is_docker_desktop():
+        logger.info("Docker Desktop detected – using PollingObserver (interval: %ds)", POLL_INTERVAL)
     return PollingObserver(timeout=POLL_INTERVAL)
 
 
