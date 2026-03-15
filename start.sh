@@ -31,10 +31,19 @@ _update_env() {
     key="$1"
     value="$2"
     escaped="$(_sed_escape_replacement "$value")"
-    args+=(-e "s|^$key=.*|$key=$escaped|")
+
+    if grep -qE "^${key}=" .env; then
+      args+=(-e "s|^$key=.*|$key=$escaped|")
+    else
+      printf '\n%s=%s\n' "$key" "$value" >> .env
+    fi
+
     shift 2
   done
-  sed -i.bak "${args[@]}" .env && rm -f .env.bak
+
+  if [[ ${#args[@]} -gt 0 ]]; then
+    sed -i.bak "${args[@]}" .env && rm -f .env.bak
+  fi
 }
 
 _summary() {
