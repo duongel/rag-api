@@ -1,14 +1,14 @@
-"""Markdown parser with Obsidian-specific features (wikilinks, frontmatter, header chunking)."""
+"""Markdown parser with Obsidian-specific features (wikilinks, frontmatter, recursive chunking)."""
 
 import re
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import frontmatter
 
-from .config import CHUNK_MIN_LENGTH, CHUNK_DISCARD_LENGTH
+from .config import CHUNK_MIN_LENGTH, CHUNK_DISCARD_LENGTH, MAX_CHUNK_SIZE, CHUNK_OVERLAP
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,33 @@ def _with_context(file_path: str, section: str, body: str) -> str:
     return f"{header}\n\n{body}"
 
 
-def parse_markdown(file_path: str, vault_path: str) -> list[Chunk]:
-    """Parse a single Markdown file into chunks.
+def _make_chunk(file_path: str, section: str, text: str) -> Chunk:
+    """Create a ``Chunk`` with context-enriched content and a content hash.
 
-    * Files shorter than ``CHUNK_MIN_LENGTH`` become a single chunk.
-    * Longer files are split at ``#``/``##``/``###`` headers.
+    Centralises the chunk-creation pattern that was previously duplicated in
+    ``parse_markdown`` (small-file, recursive-split, and fallback paths).
+    """
+    enriched = _with_context(file_path, section, text)
+    return Chunk(
+        file_path=file_path,
+        section=section,
+        content=enriched,
+        content_hash=_sha256(text),
+    )
+
+
+def parse_markdown(file_path: str, vault_path: str) -> list[Chunk]:
+    """Parse a single Markdown file into chunks using recursive splitting.
+
+    Splitting hierarchy (each level only if the chunk is still too large):
+      1. ``#`` / ``##`` / ``###`` headers  (strongest semantic boundary)
+      2. ``---`` thematic breaks            (explicit author-intended separator)
+      3. ``\\n\\n`` paragraph breaks         (natural text boundary)
+      4. ``\\n`` line breaks                 (last meaningful boundary)
+      5. Hard cut at ``MAX_CHUNK_SIZE`` with ``CHUNK_OVERLAP`` overlap
+
+    Files shorter than ``CHUNK_MIN_LENGTH`` become a single chunk.
+    Chunks shorter than ``CHUNK_DISCARD_LENGTH`` are discarded.
     """
     full_path = Path(vault_path) / file_path
 
@@ -121,73 +143,134 @@ def parse_markdown(file_path: str, vault_path: str) -> list[Chunk]:
         text = content.strip()
         if len(text) < CHUNK_DISCARD_LENGTH:
             return []
-        enriched = _with_context(file_path, stem, text)
-        return [
-            Chunk(
-                file_path=file_path,
-                section=stem,
-                content=enriched,
-                content_hash=_sha256(text),
-            )
-        ]
+        return [_make_chunk(file_path, stem, text)]
 
-    # --- split by headers -------------------------------------------------
-    #  re.split keeps the delimiters as separate list items when using a
-    #  capturing group.  We recombine header + body into chunks.
+    # --- Phase 1: split by headers into (section, body) pairs -------------
+    sections = _split_by_headers(content, stem)
+
+    # --- Phase 2: recursively split oversized sections --------------------
+    chunks: list[Chunk] = []
+    for section, body in sections:
+        for piece in _recursive_split(body, MAX_CHUNK_SIZE):
+            text = piece.strip()
+            if len(text) < CHUNK_DISCARD_LENGTH:
+                continue
+            chunks.append(_make_chunk(file_path, section, text))
+
+    # Fallback: if all pieces were discarded, keep the whole content as one chunk
+    if not chunks:
+        text = content.strip()
+        if len(text) >= CHUNK_DISCARD_LENGTH:
+            chunks.append(_make_chunk(file_path, stem, text))
+
+    return chunks
+
+
+def _split_by_headers(content: str, default_section: str) -> list[tuple[str, str]]:
+    """Split *content* at ``#``/``##``/``###`` headers.
+
+    Returns a list of ``(section_name, body_text)`` tuples.
+    If there are no headers the entire content is returned under *default_section*.
+    """
     parts = re.split(r"^(#{1,3}\s+.+)$", content, flags=re.MULTILINE)
 
-    chunks: list[Chunk] = []
-    current_header = stem
+    sections: list[tuple[str, str]] = []
+    current_header = default_section
     current_body = ""
 
     for part in parts:
         if re.match(r"^#{1,3}\s+", part):
-            # flush previous chunk
             if current_body.strip():
-                text = current_body.strip()
-                if len(text) >= CHUNK_DISCARD_LENGTH:
-                    enriched = _with_context(file_path, current_header, text)
-                    chunks.append(
-                        Chunk(
-                            file_path=file_path,
-                            section=current_header,
-                            content=enriched,
-                            content_hash=_sha256(text),
-                        )
-                    )
+                sections.append((current_header, current_body.strip()))
             current_header = part.strip().lstrip("#").strip()
             current_body = part + "\n"
         else:
             current_body += part
 
-    # last chunk
     if current_body.strip():
-        text = current_body.strip()
-        if len(text) >= CHUNK_DISCARD_LENGTH:
-            enriched = _with_context(file_path, current_header, text)
-            chunks.append(
-                Chunk(
-                    file_path=file_path,
-                    section=current_header,
-                    content=enriched,
-                    content_hash=_sha256(text),
-                )
-            )
+        sections.append((current_header, current_body.strip()))
 
-    return chunks or (
-        [Chunk(
-            file_path=file_path,
-            section=stem,
-            content=_with_context(file_path, stem, content.strip()),
-            content_hash=_sha256(content.strip()),
-        )]
-        if len(content.strip()) >= CHUNK_DISCARD_LENGTH
-        else []
-    )
+    return sections
+
+
+# Ordered from strongest to weakest boundary.
+# Each entry is a regex that matches the separator (kept out of the chunks).
+_SECONDARY_SEPARATORS: list[re.Pattern] = [
+    re.compile(r"\n---\n"),   # thematic break
+    re.compile(r"\n\n"),      # paragraph break
+    re.compile(r"\n"),        # line break
+]
+
+
+def _recursive_split(text: str, max_size: int) -> list[str]:
+    """Recursively split *text* so every piece is ≤ *max_size* chars.
+
+    Tries separators from strongest to weakest.  Falls back to a hard cut
+    with ``CHUNK_OVERLAP`` overlap when no separator can reduce the size.
+    """
+    if len(text) <= max_size:
+        return [text]
+
+    for sep in _SECONDARY_SEPARATORS:
+        parts = sep.split(text)
+        if len(parts) > 1:
+            # Reassemble into chunks that stay within max_size
+            merged = _merge_splits(parts, max_size, sep.pattern.replace("\\n", "\n"))
+            if all(len(m) <= max_size for m in merged):
+                return merged
+            # Some pieces are still too large → recurse on those
+            result: list[str] = []
+            for piece in merged:
+                result.extend(_recursive_split(piece, max_size))
+            return result
+
+    # No separator worked → hard cut with overlap
+    return _hard_split(text, max_size, CHUNK_OVERLAP)
+
+
+def _merge_splits(parts: list[str], max_size: int, join_str: str) -> list[str]:
+    """Greedily merge consecutive *parts* as long as they fit within *max_size*."""
+    merged: list[str] = []
+    current = ""
+
+    for part in parts:
+        if not part:
+            continue
+        candidate = (current + join_str + part) if current else part
+        if len(candidate) <= max_size:
+            current = candidate
+        else:
+            if current:
+                merged.append(current)
+            current = part
+
+    if current:
+        merged.append(current)
+
+    return merged
+
+
+def _hard_split(text: str, max_size: int, overlap: int) -> list[str]:
+    """Split *text* at exact character boundaries with *overlap*.
+
+    The effective overlap is clamped to ``max_size - 1`` so the cursor always
+    advances by at least one character (prevents infinite loops).
+    """
+    if max_size <= 0:
+        return [text] if text else []
+    # Ensure progress: overlap must be strictly less than max_size
+    safe_overlap = min(overlap, max_size - 1)
+    pieces: list[str] = []
+    start = 0
+    while start < len(text):
+        end = start + max_size
+        pieces.append(text[start:end])
+        start = end - safe_overlap
+    return pieces
 
 
 def parse_pdf(file_path: str, vault_path: str) -> list[Chunk]:
-    """Extract text from a PDF file, one chunk per page.
+    """Extract text from a PDF file, splitting long pages recursively.
 
     Requires ``pypdf`` (already in requirements.txt).
     Pages with too little text are discarded.
@@ -210,15 +293,11 @@ def parse_pdf(file_path: str, vault_path: str) -> list[Chunk]:
         if len(text) < CHUNK_DISCARD_LENGTH:
             continue
         section = f"page_{page_num}"
-        enriched = _with_context(file_path, section, text)
-        chunks.append(
-            Chunk(
-                file_path=file_path,
-                section=section,
-                content=enriched,
-                content_hash=_sha256(text),
-            )
-        )
+        for piece in _recursive_split(text, MAX_CHUNK_SIZE):
+            piece = piece.strip()
+            if len(piece) < CHUNK_DISCARD_LENGTH:
+                continue
+            chunks.append(_make_chunk(file_path, section, piece))
 
     logger.debug("parse_pdf %s → %d chunks", file_path, len(chunks))
     return chunks
