@@ -148,6 +148,15 @@ def parse_markdown(file_path: str, vault_path: str) -> list[Chunk]:
     # --- Phase 1: split by headers into (section, body) pairs -------------
     sections = _split_by_headers(content, stem)
 
+    # Fallback: if no Markdown headers were found and the single section is
+    # oversized, try splitting at ``---`` thematic breaks instead.  This
+    # handles Obsidian callout-based documents (e.g. Erfolgsjournal) that
+    # use ``---`` as day separators with ``> [!j-header]`` callouts.
+    if len(sections) == 1 and len(sections[0][1]) > MAX_CHUNK_SIZE:
+        thematic = _split_by_thematic_breaks(content, stem)
+        if len(thematic) > 1:
+            sections = thematic
+
     # --- Phase 2: recursively split oversized sections --------------------
     chunks: list[Chunk] = []
     for section, body in sections:
@@ -191,6 +200,48 @@ def _split_by_headers(content: str, default_section: str) -> list[tuple[str, str
         sections.append((current_header, current_body.strip()))
 
     return sections
+
+
+# Matches the Obsidian callout header used in Erfolgsjournal-style documents.
+# Example: ``> [!j-header] Montag, 21.12.2025``
+_CALLOUT_HEADER_RE = re.compile(
+    r">\s*\[!j-header\]\s*(.+)", re.IGNORECASE
+)
+
+
+def _split_by_thematic_breaks(
+    content: str, default_section: str,
+) -> list[tuple[str, str]]:
+    """Split *content* at ``---`` thematic breaks.
+
+    This is the fallback for documents without Markdown headers (``#``/``##``)
+    that use ``---`` as semantic separators — for example Obsidian journals
+    built with callout blocks.
+
+    Section names are extracted from ``> [!j-header] …`` callouts if present,
+    otherwise numbered as ``<default_section> 1``, ``<default_section> 2``, etc.
+
+    Returns a list of ``(section_name, body_text)`` tuples.
+    """
+    # Split at lines that consist solely of ``---`` (with optional whitespace)
+    blocks = re.split(r"\n-{3,}\n", content)
+
+    if len(blocks) <= 1:
+        return [(default_section, content.strip())]
+
+    sections: list[tuple[str, str]] = []
+    for idx, block in enumerate(blocks, start=1):
+        body = block.strip()
+        if not body:
+            continue
+
+        # Try to extract a meaningful section name from a callout header
+        m = _CALLOUT_HEADER_RE.search(body)
+        section = m.group(1).strip() if m else f"{default_section} {idx}"
+
+        sections.append((section, body))
+
+    return sections or [(default_section, content.strip())]
 
 
 # Ordered from strongest to weakest boundary.
