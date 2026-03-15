@@ -32,8 +32,7 @@ All data-bearing endpoints require a bearer token by default.
 
 - Linux (x86_64 or arm64) or macOS
 - Docker Engine (or Docker Desktop on macOS) running
-- `curl` (for the one-liner bootstrap)
-- `git`
+- `curl`
 
 ## Installation
 
