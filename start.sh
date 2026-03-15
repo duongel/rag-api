@@ -43,20 +43,22 @@ _json_int() {
 }
 
 _compose() {
-  docker compose -f docker-compose.yml "${COMPOSE_HOST_ARGS[@]}" "$@"
+  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
+    docker compose -f docker-compose.yml -f docker-compose.host.yml "$@"
+  else
+    docker compose -f docker-compose.yml "$@"
+  fi
 }
 
 _api_get() {
   local path=$1
-  local url
-  local auth_header=()
-  if [[ "${AUTH_REQUIRED:-true}" == "true" ]]; then
-    auth_header=(-H "Authorization: Bearer ${API_BEARER_TOKEN}")
-  fi
-
   if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    url="http://${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8484}${path}"
-    curl -sf "${auth_header[@]}" "$url"
+    local url="http://${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8484}${path}"
+    if [[ "${AUTH_REQUIRED:-true}" == "true" ]]; then
+      curl -sf -H "Authorization: Bearer ${API_BEARER_TOKEN}" "$url"
+    else
+      curl -sf "$url"
+    fi
   else
     docker exec rag-api python -c '
 import sys, urllib.request
@@ -234,11 +236,6 @@ else
   _run_setup
 fi
 
-if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-  COMPOSE_HOST_ARGS=(-f docker-compose.host.yml)
-else
-  COMPOSE_HOST_ARGS=()
-fi
 
 # Ensure the Docker network exists before starting containers.
 # This is a no-op if the network already exists (e.g. created by n8n).
