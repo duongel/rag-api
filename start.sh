@@ -319,6 +319,69 @@ if [[ -f .env ]]; then
       fi
       # Persist DATA_SOURCES back to .env so the effective value is always visible
       sed -i.bak "s|^DATA_SOURCES=.*|DATA_SOURCES=${DATA_SOURCES}|" .env && rm -f .env.bak
+
+      # ── Fill in any paths that are now required but missing ──────────────
+      # This happens when e.g. the first run used --obsidian-only and the second
+      # run uses no flag (→ all), so Paperless was never configured.
+
+      # Vault path needed but missing
+      if [[ "$DATA_SOURCES" != "paperless" && (-z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}") ]]; then
+        echo -e "${YELLOW}⚠️  VAULT_PATH is missing or invalid. Please provide it now.${NC}"
+        while true; do
+          printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
+          read -r VAULT_PATH
+          VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
+          if [[ -d "$VAULT_PATH" ]]; then
+            VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
+            echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
+            sed -i.bak "s|^VAULT_PATH=.*|VAULT_PATH=${VAULT_PATH}|" .env && rm -f .env.bak
+            break
+          fi
+          echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
+        done
+      fi
+
+      # Paperless archive path needed but missing
+      if [[ "$DATA_SOURCES" != "obsidian" && (-z "${PAPERLESS_ARCHIVE_PATH:-}" || ! -d "${PAPERLESS_ARCHIVE_PATH:-}") ]]; then
+        echo -e "${YELLOW}⚠️  PAPERLESS_ARCHIVE_PATH is missing or invalid. Please provide it now.${NC}"
+        while true; do
+          printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
+          read -r PAPERLESS_ARCHIVE_PATH
+          PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
+          if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+            echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
+            DATA_SOURCES="obsidian"
+            sed -i.bak "s|^DATA_SOURCES=.*|DATA_SOURCES=obsidian|" .env && rm -f .env.bak
+            break
+          fi
+          if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
+            PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
+            echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
+            sed -i.bak "s|^PAPERLESS_ARCHIVE_PATH=.*|PAPERLESS_ARCHIVE_PATH=${PAPERLESS_ARCHIVE_PATH}|" .env && rm -f .env.bak
+            # Also prompt for API URL + token if not yet set
+            if [[ -z "${PAPERLESS_URL:-}" ]]; then
+              echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
+              read -r PAPERLESS_URL
+              if [[ -n "$PAPERLESS_URL" ]]; then
+                echo -n "🔑 Paperless API token: "
+                read -rs PAPERLESS_TOKEN
+                echo ""
+                echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
+                read -r PAPERLESS_PUBLIC_URL
+                sed -i.bak \
+                  -e "s|^PAPERLESS_URL=.*|PAPERLESS_URL=${PAPERLESS_URL}|" \
+                  -e "s|^PAPERLESS_TOKEN=.*|PAPERLESS_TOKEN=${PAPERLESS_TOKEN}|" \
+                  -e "s|^PAPERLESS_PUBLIC_URL=.*|PAPERLESS_PUBLIC_URL=${PAPERLESS_PUBLIC_URL}|" \
+                  .env && rm -f .env.bak
+                echo -e "   ${GREEN}✓${NC} Paperless: $PAPERLESS_URL\n"
+              fi
+            fi
+            break
+          fi
+          echo -e "${RED}❌ Directory not found: $PAPERLESS_ARCHIVE_PATH${NC}"
+        done
+      fi
+
       if [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]]; then
         LOCAL_OLLAMA=true
       else
