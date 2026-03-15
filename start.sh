@@ -67,7 +67,9 @@ _compose() {
   local files=(-f docker-compose.yml)
   [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
   [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
-  [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && files+=(-f docker-compose.paperless.yml)
+  if [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && [[ "${DATA_SOURCES:-all}" != "obsidian" ]]; then
+    files+=(-f docker-compose.paperless.yml)
+  fi
   docker compose "${files[@]}" "$@"
 }
 
