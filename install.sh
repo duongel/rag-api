@@ -6,7 +6,7 @@ set -euo pipefail
 BASE="https://raw.githubusercontent.com/duongel/rag-api/master"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/rag-api}"
 
-BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
 command -v curl   >/dev/null 2>&1 || { echo -e "${RED}❌ curl is required but not installed.${NC}" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo -e "${RED}❌ Docker not found.${NC}" >&2; exit 1; }
