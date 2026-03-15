@@ -8,6 +8,9 @@ PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8484")
 API_BEARER_TOKEN = os.environ.get("API_BEARER_TOKEN", "")
 AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true", "yes", "on"}
 
+# Which data sources to index: "obsidian" | "paperless" | "all"
+DATA_SOURCES = os.environ.get("DATA_SOURCES", "all")
+
 # Minimum content length (chars) before splitting into chunks.
 # Shorter files are indexed as a single chunk.
 CHUNK_MIN_LENGTH = 500

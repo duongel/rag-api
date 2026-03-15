@@ -12,6 +12,16 @@ _DEFAULT_PORT="8484"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Argument parsing ──────────────────────────────────────────────────────
+DATA_SOURCES="all"
+for arg in "$@"; do
+  case "$arg" in
+    --obsidian-only)  DATA_SOURCES="obsidian"  ;;
+    --paperless-only) DATA_SOURCES="paperless" ;;
+    *) die "Unknown argument: $arg\nUsage: ./start.sh [--obsidian-only | --paperless-only]" ;;
+  esac
+done
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
@@ -87,21 +97,37 @@ echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 
 _run_setup() {
   local generated_token
+  local paperless_url="" paperless_token=""
 
-  # 1. Vault path
-  while true; do
-    printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
-    read -r VAULT_PATH
-    VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
-    if [[ -d "$VAULT_PATH" ]]; then
-      VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
-      echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
-      break
-    fi
-    echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
-  done
+  # 1. Vault path – only when indexing Obsidian
+  if [[ "$DATA_SOURCES" != "paperless" ]]; then
+    while true; do
+      printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
+      read -r VAULT_PATH
+      VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
+      if [[ -d "$VAULT_PATH" ]]; then
+        VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
+        echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
+        break
+      fi
+      echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
+    done
+  else
+    VAULT_PATH=""
+  fi
 
-  # 2. Ollama – local or external?
+  # 2. Paperless config – only when indexing Paperless
+  if [[ "$DATA_SOURCES" != "obsidian" ]]; then
+    echo -n "📄 Paperless URL [http://paperless-webserver:8000]: "
+    read -r paperless_url
+    paperless_url="${paperless_url:-http://paperless-webserver:8000}"
+    echo -n "🔑 Paperless API token: "
+    read -rs paperless_token
+    echo ""
+    echo -e "   ${GREEN}✓${NC} Paperless: $paperless_url\n"
+  fi
+
+  # 3. Ollama – local or external?
   echo -n "🦙 Is Ollama already running externally? [y/N] "
   read -r USE_EXTERNAL
 
@@ -172,6 +198,7 @@ _run_setup() {
 
   # 5. Write .env
   cat > .env <<EOF
+DATA_SOURCES=$DATA_SOURCES
 VAULT_PATH=$VAULT_PATH
 OLLAMA_URL=$OLLAMA_URL
 COMPOSE_PROFILES=$COMPOSE_PROFILES
@@ -182,6 +209,8 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
+PAPERLESS_URL=$paperless_url
+PAPERLESS_TOKEN=$paperless_token
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
   if [[ "$AUTH_REQUIRED" == "true" ]]; then
@@ -211,7 +240,10 @@ if [[ -f .env ]]; then
       _run_setup
     else
       # Load values from existing .env
+      _cli_data_sources="$DATA_SOURCES"
       set -a; source .env; set +a
+      # CLI flag always wins over the stored value
+      [[ "$_cli_data_sources" != "all" ]] && DATA_SOURCES="$_cli_data_sources"
       ACCESS_MODE="${ACCESS_MODE:-host}"
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"

@@ -8,7 +8,7 @@ import secrets
 import requests
 import uvicorn
 
-from .config import OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN
+from .config import OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN, DATA_SOURCES
 from .indexer import Indexer
 from .search import Searcher
 from .watcher import start_watcher
@@ -19,6 +19,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_INDEX_OBSIDIAN = DATA_SOURCES in ("obsidian", "all")
 
 
 def _wait_for_ollama():
@@ -49,6 +51,7 @@ def main():
             f"Set a long random bearer token, for example: {secrets.token_hex(32)}"
         )
 
+    logger.info("Data sources: %s", DATA_SOURCES)
     _wait_for_ollama()
 
     logger.info("Initialising indexer …")
@@ -58,7 +61,7 @@ def main():
     # inject into FastAPI module
     api.indexer = indexer
     api.searcher = search
-    api.indexing_status = {"indexing": True, "indexed_files": 0, "total_files": 0}
+    api.indexing_status = {"indexing": _INDEX_OBSIDIAN, "indexed_files": 0, "total_files": 0}
 
     def _on_progress(processed: int, total: int) -> None:
         api.indexing_status["indexed_files"] = processed
@@ -66,7 +69,8 @@ def main():
 
     def _run_reindex():
         try:
-            indexer.full_reindex(on_progress=_on_progress)
+            if _INDEX_OBSIDIAN:
+                indexer.full_reindex(on_progress=_on_progress)
         except Exception as e:
             logger.error("Reindex failed: %s", e)
         finally:
@@ -77,18 +81,20 @@ def main():
                 "Indexing complete – %d files in index.", len(indexer._file_hashes)
             )
 
-    logger.info("Starting background reindex …")
     threading.Thread(target=_run_reindex, daemon=True).start()
 
-    logger.info("Starting file watcher …")
-    observer = start_watcher(indexer)
+    observer = None
+    if _INDEX_OBSIDIAN:
+        logger.info("Starting file watcher …")
+        observer = start_watcher(indexer)
 
     logger.info("Starting API server on port %d …", API_PORT)
     try:
         uvicorn.run(api.app, host="0.0.0.0", port=API_PORT)
     finally:
-        observer.stop()
-        observer.join()
+        if observer:
+            observer.stop()
+            observer.join()
 
 
 if __name__ == "__main__":
