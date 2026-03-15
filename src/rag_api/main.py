@@ -73,6 +73,15 @@ def main():
             f"Obsidian indexing is enabled but VAULT_PATH does not exist in the container: {VAULT_PATH}"
         )
 
+    index_paperless = _INDEX_PAPERLESS
+    if _INDEX_PAPERLESS and not Path(PAPERLESS_ARCHIVE_PATH).exists():
+        logger.warning(
+            "Paperless indexing is enabled but PAPERLESS_ARCHIVE_PATH does not exist: %s. "
+            "Skipping Paperless reindex to avoid cleanup of previously indexed documents.",
+            PAPERLESS_ARCHIVE_PATH,
+        )
+        index_paperless = False
+
     logger.info("Data sources: %s (paperless archive: %s)", DATA_SOURCES, PAPERLESS_ARCHIVE_PATH or "not configured")
     _wait_for_ollama()
 
@@ -84,7 +93,7 @@ def main():
     api.indexer = indexer
     api.searcher = search
     api.indexing_status = {
-        "indexing": _INDEX_OBSIDIAN or _INDEX_PAPERLESS,
+        "indexing": _INDEX_OBSIDIAN or index_paperless,
         "indexed_files": 0,
         "total_files": 0,
         "obsidian_indexed": 0,
@@ -111,7 +120,7 @@ def main():
                 indexer.full_reindex(
                     on_progress=lambda p, t: _on_progress(p, t, "obsidian")
                 )
-            if _INDEX_PAPERLESS:
+            if index_paperless:
                 logger.info("Starting Paperless archive reindex …")
                 indexer.full_reindex(
                     base_path=PAPERLESS_ARCHIVE_PATH,
@@ -134,7 +143,7 @@ def main():
     observer = start_watcher(
         indexer,
         watch_obsidian=_INDEX_OBSIDIAN,
-        watch_paperless=_INDEX_PAPERLESS,
+        watch_paperless=index_paperless,
     )
 
     logger.info("Starting API server on port %d …", API_PORT)
