@@ -20,10 +20,18 @@ cd "$SCRIPT_DIR"
 die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 
 # _update_env KEY VALUE [KEY VALUE …]  –  atomically update key=value pairs in .env
+_sed_escape_replacement() {
+  # Escape characters that are special in sed replacement strings.
+  printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'
+}
+
 _update_env() {
-  local args=()
+  local args=() key value escaped
   while [[ $# -ge 2 ]]; do
-    args+=(-e "s|^$1=.*|$1=$2|")
+    key="$1"
+    value="$2"
+    escaped="$(_sed_escape_replacement "$value")"
+    args+=(-e "s|^$key=.*|$key=$escaped|")
     shift 2
   done
   sed -i.bak "${args[@]}" .env && rm -f .env.bak
@@ -61,7 +69,9 @@ _draw_bar() {
 
 _json_int() {
   # _json_int "$json_string" "field_name" → integer or 0
-  echo "$1" | grep -o "\"$2\":[0-9]*" | grep -o '[0-9]*' | head -1 || echo "0"
+  local val
+  val=$(echo "$1" | grep -o "\"$2\":[0-9]*" | grep -m1 -o '[0-9]*') || true
+  echo "${val:-0}"
 }
 
 _compose() {
