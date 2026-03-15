@@ -180,6 +180,14 @@ class Indexer:
         root = Path(base_path or VAULT_PATH)
         count = 0
 
+        if not root.exists():
+            logger.warning(
+                "Skipping full reindex for source '%s': base path does not exist (%s)",
+                source,
+                root,
+            )
+            return 0
+
         def _is_hidden(rel: Path) -> bool:
             return any(p.startswith(".") for p in rel.parts)
 
