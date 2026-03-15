@@ -8,6 +8,8 @@ BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 # ── Defaults (single source of truth) ────────────────────────────────────
 _DEFAULT_BIND="127.0.0.1"
 _DEFAULT_PORT="8484"
+_DEFAULT_OLLAMA_SERVICE="ollama"
+_DEFAULT_RAG_API_SERVICE="rag-api"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -33,14 +35,14 @@ _summary() {
     echo -e "   API:     ${BLUE}internal Docker network only${NC}"
     echo -e "   Network: ${BOLD}${DOCKER_NETWORK:-rag-network}${NC}"
   fi
-  echo -e "   Logs:    ${BOLD}docker logs -f rag-api${NC}"
+  echo -e "   Logs:    ${BOLD}docker compose logs -f ${_DEFAULT_RAG_API_SERVICE}${NC}"
   echo -e "   Stop:    ${BOLD}docker compose down${NC}"
 }
 
-_draw_bar() {
+_bar_str() {
   local cur=$1 tot=$2 w=30
   if [ "$tot" -le 0 ]; then
-    printf '\r\033[K   ⏳ %d files indexed...' "$cur"; return
+    printf '⏳ %d files indexed...' "$cur"; return
   fi
   local pct=$(( cur * 100 / tot ))
   local f=$(( cur * w / tot ))
@@ -48,7 +50,12 @@ _draw_bar() {
   local bar_f="" bar_e=""
   [ "$f" -gt 0 ] && bar_f=$(printf '%0.s█' $(seq 1 "$f"))
   [ "$e" -gt 0 ] && bar_e=$(printf '%0.s░' $(seq 1 "$e"))
-  printf '\r\033[K   [%s%s] %d/%d (%d%%)' "$bar_f" "$bar_e" "$cur" "$tot" "$pct"
+  printf '[%s%s] %d/%d (%d%%)' "$bar_f" "$bar_e" "$cur" "$tot" "$pct"
+}
+
+_draw_bar() {
+  printf '\r\033[K   '
+  _bar_str "$1" "$2"
 }
 
 _json_int() {
@@ -57,10 +64,19 @@ _json_int() {
 }
 
 _compose() {
-  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    docker compose -f docker-compose.yml -f docker-compose.host.yml "$@"
-  else
-    docker compose -f docker-compose.yml "$@"
+  local files=(-f docker-compose.yml)
+  [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
+  [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
+  if [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && [[ "${DATA_SOURCES:-all}" != "obsidian" ]]; then
+    files+=(-f docker-compose.paperless.yml)
+  fi
+  docker compose "${files[@]}" "$@"
+}
+
+_validate_config() {
+  if [[ "${DATA_SOURCES:-all}" != "paperless" ]]; then
+    [[ -n "${VAULT_PATH:-}" ]] || die "VAULT_PATH is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+    [[ -d "${VAULT_PATH}" ]] || die "VAULT_PATH does not exist: ${VAULT_PATH}"
   fi
 }
 
@@ -74,7 +90,7 @@ _api_get() {
       curl -sf "$url"
     fi
   else
-    docker exec rag-api python -c '
+    _compose exec -T "${_DEFAULT_RAG_API_SERVICE}" python -c '
 import sys, urllib.request
 path = sys.argv[1]
 token = sys.argv[2]
@@ -89,7 +105,7 @@ with urllib.request.urlopen(req, timeout=5) as resp:
 
 # ── Prerequisites ─────────────────────────────────────────────────────────
 
-docker info > /dev/null 2>&1 || die "Docker Desktop is not running. Please start it and try again."
+docker info > /dev/null 2>&1 || die "Docker is not running. Please start the Docker daemon and try again."
 
 echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 
@@ -97,7 +113,8 @@ echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 
 _run_setup() {
   local generated_token
-  local paperless_url="" paperless_token=""
+  local paperless_url="" paperless_token="" paperless_public_url="" paperless_archive_path=""
+  local ollama_service_name=""
 
   # 1. Vault path – only when indexing Obsidian
   if [[ "$DATA_SOURCES" != "paperless" ]]; then
@@ -118,13 +135,41 @@ _run_setup() {
 
   # 2. Paperless config – only when indexing Paperless
   if [[ "$DATA_SOURCES" != "obsidian" ]]; then
-    echo -n "📄 Paperless URL [http://paperless-webserver:8000]: "
-    read -r paperless_url
-    paperless_url="${paperless_url:-http://paperless-webserver:8000}"
-    echo -n "🔑 Paperless API token: "
-    read -rs paperless_token
-    echo ""
-    echo -e "   ${GREEN}✓${NC} Paperless: $paperless_url\n"
+    while true; do
+      printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
+      read -r paperless_archive_path
+      paperless_archive_path="${paperless_archive_path/#\~/$HOME}"
+      if [[ -z "$paperless_archive_path" ]]; then
+        if [[ "$DATA_SOURCES" == "paperless" ]]; then
+          echo -e "   ${YELLOW}⚠️  Paperless archive skipped – no Paperless documents will be indexed.${NC}\n"
+        else
+          echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
+        fi
+        break
+      fi
+      if [[ -d "$paperless_archive_path" ]]; then
+        paperless_archive_path="$(cd "$paperless_archive_path" && pwd)"
+        echo -e "   ${GREEN}✓${NC} $paperless_archive_path\n"
+        break
+      fi
+      echo -e "${RED}❌ Directory not found: $paperless_archive_path${NC}"
+    done
+
+    if [[ -n "$paperless_archive_path" ]]; then
+      echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
+      read -r paperless_url
+      if [[ -n "$paperless_url" ]]; then
+        echo -n "🔑 Paperless API token: "
+        read -rs paperless_token
+        echo ""
+        echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
+        echo -e "      can open the source document in your Paperless UI."
+        echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
+        echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
+        read -r paperless_public_url
+        echo -e "   ${GREEN}✓${NC} Paperless: $paperless_url\n"
+      fi
+    fi
   fi
 
   # 3. Ollama – local or external?
@@ -132,14 +177,17 @@ _run_setup() {
   read -r USE_EXTERNAL
 
   if [[ "$USE_EXTERNAL" =~ ^[yYjJ]$ ]]; then
-    echo -n "   URL [http://localhost:11434]: "
+    echo -n "   Docker service/container name on the shared network [${_DEFAULT_OLLAMA_SERVICE}]: "
+    read -r ollama_service_name
+    ollama_service_name="${ollama_service_name:-$_DEFAULT_OLLAMA_SERVICE}"
+    echo -n "   Override URL [http://${ollama_service_name}:11434, leave empty to use the service name]: "
     read -r OLLAMA_URL
-    OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+    OLLAMA_URL="${OLLAMA_URL:-http://${ollama_service_name}:11434}"
     COMPOSE_PROFILES=""
     LOCAL_OLLAMA=false
     echo -e "   ${GREEN}✓${NC} Using external Ollama: $OLLAMA_URL\n"
   else
-    OLLAMA_URL="http://ollama:11434"
+    OLLAMA_URL="http://${_DEFAULT_OLLAMA_SERVICE}:11434"
     COMPOSE_PROFILES="local-ollama"
     LOCAL_OLLAMA=true
     echo -e "   ${GREEN}✓${NC} Local Ollama will be started\n"
@@ -209,8 +257,10 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
+PAPERLESS_ARCHIVE_PATH=$paperless_archive_path
 PAPERLESS_URL=$paperless_url
 PAPERLESS_TOKEN=$paperless_token
+PAPERLESS_PUBLIC_URL=$paperless_public_url
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
   if [[ "$AUTH_REQUIRED" == "true" ]]; then
@@ -226,7 +276,11 @@ EOF
 
 if [[ -f .env ]]; then
   EXISTING_VAULT=$(grep -E '^VAULT_PATH=' .env | cut -d= -f2-)
-  if [[ -n "$EXISTING_VAULT" && -d "$EXISTING_VAULT" ]]; then
+  EXISTING_PAPERLESS=$(grep -E '^PAPERLESS_ARCHIVE_PATH=' .env | cut -d= -f2-)
+  _env_valid=false
+  [[ -n "$EXISTING_VAULT" && -d "$EXISTING_VAULT" ]] && _env_valid=true
+  [[ -n "$EXISTING_PAPERLESS" && -d "$EXISTING_PAPERLESS" ]] && _env_valid=true
+  if [[ "$_env_valid" == true ]]; then
     echo -e "${BOLD}📄 Existing .env found:${NC}"
     grep -v '^#' .env | grep -v '^[[:space:]]*$' | while IFS='=' read -r key val; do
       echo -e "   ${BLUE}${key}${NC}=${val}"
@@ -248,11 +302,12 @@ if [[ -f .env ]]; then
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
       DOCKER_NETWORK="${DOCKER_NETWORK:-}"
+      PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH:-}"
       if [[ "$ACCESS_MODE" == "host" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
       else
-        PUBLIC_URL="${PUBLIC_URL:-http://rag-api:8080}"
+        PUBLIC_URL="${PUBLIC_URL:-http://${_DEFAULT_RAG_API_SERVICE}:8080}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
       fi
       # Only add the token if auth is required but none exists yet
@@ -270,13 +325,14 @@ if [[ -f .env ]]; then
       echo -e "${GREEN}✅ Using existing .env${NC}\n"
     fi
   else
-    # .env exists but vault path is missing or invalid → run setup
+    # .env exists but no valid vault/paperless path found → run setup
     _run_setup
   fi
 else
   _run_setup
 fi
 
+_validate_config
 
 # Ensure the Docker network exists before starting containers.
 # This is a no-op if the network already exists (e.g. created by n8n).
@@ -285,24 +341,24 @@ docker network create "${DOCKER_NETWORK:-rag-network}" > /dev/null 2>&1 || true
 # ── Start Ollama & pull model (local only) ────────────────────────────────
 if [[ "$LOCAL_OLLAMA" == true ]]; then
   echo "🦙 Starting Ollama container..."
-  _compose --profile local-ollama up -d ollama
+  _compose --profile local-ollama up -d "${_DEFAULT_OLLAMA_SERVICE}"
 
   echo "⏳ Waiting for Ollama API..."
   attempts=0
-  until docker exec ollama ollama list > /dev/null 2>&1; do
+  until _compose exec -T "${_DEFAULT_OLLAMA_SERVICE}" ollama list > /dev/null 2>&1; do
     sleep 2
     attempts=$(( attempts + 1 ))
-    [ "$attempts" -ge 60 ] && die "Ollama did not respond after 2 minutes. Check: docker logs ollama"
+    [ "$attempts" -ge 60 ] && die "Ollama did not respond after 2 minutes. Check: docker compose logs ${_DEFAULT_OLLAMA_SERVICE}"
   done
 
   echo "📥 Pulling nomic-embed-text (first run: ~1 min)..."
-  docker exec ollama ollama pull nomic-embed-text
+  _compose exec -T "${_DEFAULT_OLLAMA_SERVICE}" ollama pull nomic-embed-text
   echo -e "${GREEN}✅ Model ready${NC}\n"
 fi
 
 # ── Start rag-api ─────────────────────────────────────────────────────────
-echo "🐳 Building and starting rag-api..."
-_compose up -d --build rag-api || die "docker compose failed. Check: docker logs rag-api"
+echo "🐳 Starting rag-api..."
+_compose up -d "${_DEFAULT_RAG_API_SERVICE}" || die "docker compose failed. Check: docker compose logs ${_DEFAULT_RAG_API_SERVICE}"
 echo ""
 
 # ── Wait for indexing (Ctrl+C skips, containers keep running) ────────────
@@ -315,6 +371,7 @@ until _api_get /health > /dev/null 2>&1; do
   sleep 2
 done
 
+_PROGRESS_LINES=0
 INDEXED=0
 while true; do
   STATUS=$(_api_get /status 2>/dev/null || echo "{}")
@@ -322,12 +379,24 @@ while true; do
   TOTAL=$(_json_int  "$STATUS" "total_files")
 
   if echo "$STATUS" | grep -q '"indexing":false'; then
-    printf '\r\033[K'
+    [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA\r\033[J' "$_PROGRESS_LINES"
     echo -e "${GREEN}✅ RAG API ready! ${INDEXED} files indexed.${NC}"
     break
   fi
 
-  _draw_bar "$INDEXED" "$TOTAL"
+  if [[ "${DATA_SOURCES:-all}" == "all" && -n "${PAPERLESS_ARCHIVE_PATH:-}" ]]; then
+    OBS_IDX=$(_json_int "$STATUS" "obsidian_indexed")
+    OBS_TOT=$(_json_int "$STATUS" "obsidian_total")
+    PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")
+    PAP_TOT=$(_json_int "$STATUS" "paperless_total")
+    [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA' "$_PROGRESS_LINES"
+    _PROGRESS_LINES=2
+    printf '\r\033[K   Obsidian:  '; _bar_str "$OBS_IDX" "$OBS_TOT"; printf '\n'
+    printf '\r\033[K   Paperless: '; _bar_str "$PAP_IDX" "$PAP_TOT"
+  else
+    _PROGRESS_LINES=1
+    _draw_bar "$INDEXED" "$TOTAL"
+  fi
   sleep 2
 done
 
@@ -337,5 +406,8 @@ echo ""
 _summary
 echo ""
 
-command -v osascript > /dev/null 2>&1 && \
+if command -v osascript > /dev/null 2>&1; then
   osascript -e "display notification \"${INDEXED} files indexed\" with title \"RAG API ready\" sound name \"Glass\"" 2>/dev/null &
+elif command -v notify-send > /dev/null 2>&1; then
+  notify-send "RAG API ready" "${INDEXED} files indexed" 2>/dev/null &
+fi

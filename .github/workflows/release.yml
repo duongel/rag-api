@@ -9,6 +9,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  packages: write
 
 jobs:
   release:
@@ -16,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Europe/Berlin
+    outputs:
+      new_release_published: ${{ steps.release.outputs.new_release_published }}
+      new_release_version: ${{ steps.release.outputs.new_release_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +33,7 @@ jobs:
           node-version: "lts/*"
 
       - name: Semantic Release
+        id: release
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
@@ -36,3 +41,5 @@ jobs:
             @semantic-release/git@10
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
