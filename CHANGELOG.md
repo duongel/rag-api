@@ -1,3 +1,26 @@
+# [1.2.0](https://github.com/duongel/rag-api/compare/v1.1.0...v1.2.0) (2026-03-15)
+
+
+### Bug Fixes
+
+* chunking strategy switched to RecursiveCharacterTextSplitter with Markdown-Awareness, preventing huge chucks getting rejected ([d53ff28](https://github.com/duongel/rag-api/commit/d53ff28e188476e0518c312b12b29c2ad3892124))
+* CLI flag (incl. default 'all') always overrides stored DATA_SOURCES in .env ([8df7240](https://github.com/duongel/rag-api/commit/8df72400cd0b292a01bd2b82e6544f4eb25f90c3))
+* fixed docker build when updating ([c9d5ec1](https://github.com/duongel/rag-api/commit/c9d5ec1f5866a141a9312045978548a405c5c994))
+* guard installer updates and persist missing env keys ([d513f0b](https://github.com/duongel/rag-api/commit/d513f0b7ea58b53551492409021c71abea8d0527))
+* guard paperless indexing when archive path is missing ([aa6406f](https://github.com/duongel/rag-api/commit/aa6406fdd76cee6144db7d5744c31ab537d7c001))
+* indexing algorithm, fixed update mechanism rebuilds container ([80fad0b](https://github.com/duongel/rag-api/commit/80fad0b890f3473afba7a17436cf4f6b9fbff7cb))
+* prompt for missing vault/paperless paths on Y-reuse when DATA_SOURCES expands ([cbf60d1](https://github.com/duongel/rag-api/commit/cbf60d17f0d6225eebe9a39eb4980b0cf3ef4ef9))
+* regression ([#3](https://github.com/duongel/rag-api/issues/3)) ([2cdea4c](https://github.com/duongel/rag-api/commit/2cdea4cfbac2ff5aaf49b61e8fa7bafedb1d70d7))
+* removed testfile, fixed color use ([1f51635](https://github.com/duongel/rag-api/commit/1f516357e29338a72a86c54c6c21f94761df8735))
+* restructured project, implemented tests for chunking ([9c4e908](https://github.com/duongel/rag-api/commit/9c4e908ee70d86aa5ee4923922fef9b239843b0e))
+* revert to curl-based installer, add exec </dev/tty for piped stdin, safe re-run ([f62c1dc](https://github.com/duongel/rag-api/commit/f62c1dc380dd7a92eaf778e644966cb3a7f1a56f))
+* **start:** harden env updates and status counter fallback ([26b8be7](https://github.com/duongel/rag-api/commit/26b8be7e1805f9bf827670013ee4035dd3f0737d))
+
+
+### Features
+
+* distribution optimization ([#2](https://github.com/duongel/rag-api/issues/2)) ([d00648c](https://github.com/duongel/rag-api/commit/d00648cb16741a01257d21fd0cd2986329608927))
+
 # [1.1.0](https://github.com/duongel/rag-api/compare/v1.0.0...v1.1.0) (2026-03-15)
 
 
