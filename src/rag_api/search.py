@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .config import VAULT_PATH
+from .config import VAULT_PATH, DATA_SOURCES
 from .embeddings import embed_query
 from .indexer import Indexer
 
@@ -55,6 +55,7 @@ class Searcher:
                     "content": results["documents"][0][i],
                     "score": round(1 - results["distances"][0][i], 4),
                     "match_type": "semantic",
+                    "source": results["metadatas"][0][i].get("source", "obsidian"),
                 }
             )
 
@@ -186,6 +187,7 @@ class Searcher:
                     "section": meta.get("section", ""),
                     "content": res["documents"][0][0],
                     "score": round(1 - res["distances"][0][0], 4),
+                    "source": meta.get("source", "obsidian"),
                 }
         except Exception:
             pass
@@ -198,26 +200,43 @@ class Searcher:
     def keyword_search(self, query: str, top_k: int = 10) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive)."""
         query_lower = query.lower()
-        vault = Path(VAULT_PATH)
         results: list[dict] = []
         seen: set[str] = set()
 
-        # 1) Filename matches
-        for fp in self.indexer._file_hashes:
-            if query_lower in fp.lower():
-                full_path = vault / fp
-                if full_path.exists():
-                    content = full_path.read_text(encoding="utf-8")
-                    results.append(
-                        {
-                            "file_path": fp,
-                            "section": "",
-                            "content": content[:1000],
-                            "score": 1.0,
-                            "match_type": "filename",
-                        }
-                    )
-                    seen.add(fp)
+        # 1) Filename matches — only for text-readable (Markdown) obsidian files
+        for doc_key, source in self.indexer._file_sources.items():
+            fp = self.indexer._file_path_from_key(doc_key)
+            if query_lower not in fp.lower():
+                continue
+            if source == "paperless" or not fp.endswith(".md"):
+                # PDFs are binary; content is already in ChromaDB (step 2)
+                results.append(
+                    {
+                        "file_path": fp,
+                        "section": "",
+                        "content": "",
+                        "score": 1.0,
+                        "match_type": "filename",
+                        "source": source,
+                    }
+                )
+                seen.add(f"{source}::{fp}")
+                continue
+            base = Path(VAULT_PATH)
+            full_path = base / fp
+            if full_path.exists():
+                content = full_path.read_text(encoding="utf-8", errors="ignore")
+                results.append(
+                    {
+                        "file_path": fp,
+                        "section": "",
+                        "content": content[:1000],
+                        "score": 1.0,
+                        "match_type": "filename",
+                        "source": source,
+                    }
+                )
+                seen.add(f"{source}::{fp}")
 
         # 2) Content matches via ChromaDB $contains (case-sensitive)
         try:
@@ -227,7 +246,7 @@ class Searcher:
             )
             for i, doc in enumerate(matches["documents"] or []):
                 meta = matches["metadatas"][i]
-                key = f"{meta['file_path']}#{meta.get('section', '')}"
+                key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                 if key not in seen:
                     results.append(
                         {
@@ -236,6 +255,7 @@ class Searcher:
                             "content": doc[:1000],
                             "score": 0.9,
                             "match_type": "content",
+                            "source": meta.get("source", "obsidian"),
                         }
                     )
                     seen.add(key)
@@ -249,7 +269,7 @@ class Searcher:
                 for i, doc in enumerate(all_docs["documents"] or []):
                     if query_lower in doc.lower():
                         meta = all_docs["metadatas"][i]
-                        key = f"{meta['file_path']}#{meta.get('section', '')}"
+                        key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                         if key not in seen:
                             results.append(
                                 {
@@ -258,6 +278,7 @@ class Searcher:
                                     "content": doc[:1000],
                                     "score": 0.8,
                                     "match_type": "content",
+                                    "source": meta.get("source", "obsidian"),
                                 }
                             )
                             seen.add(key)
@@ -273,6 +294,8 @@ class Searcher:
 
     def get_note(self, path: str) -> dict | None:
         """Return full Markdown content of a note by relative path."""
+        if DATA_SOURCES == "paperless":
+            return None
         full_path = Path(VAULT_PATH) / path
         if not full_path.exists():
             return None

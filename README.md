@@ -8,23 +8,34 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 ┌────────────────────┐     ┌──────────────────────┐
 │   rag-api          │────▶│   ollama             │
 │   (Python/FastAPI) │     │   (nomic-embed-text) │
-│   + ChromaDB       │     │   Apple Silicon GPU  │
+│   + ChromaDB       │     │   GPU (optional)     │
 │   + File Watcher   │     └──────────────────────┘
-│                    │◀── /vault (read-only mount)
+│                    │◄── /vault (read-only mount)
 └────────────────────┘
         │
    rag-network (or any external Docker network)
 ```
 
-All services run inside a Docker network. Host port publishing is optional.
+All services run inside a Docker network. Host port publishing is optional.  
 All data-bearing endpoints require a bearer token by default.
 
 ## Requirements
 
-- macOS with Apple Silicon
-- Docker environment ([Colima](https://github.com/abiosoft/colima) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)) running
+- Linux (x86_64 or arm64) or macOS
+- Docker Engine (or Docker Desktop on macOS) running
+- `curl`
 
 ## Setup
+
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
+```
+
+This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step – the pre-built image is pulled from GHCR automatically.
+
+### Manual (advanced / development)
 
 ```bash
 git clone git@github.com:duongel/rag-api.git
@@ -36,13 +47,13 @@ chmod +x start.sh
 The script asks:
 
 1. **Path to vault** – directory containing the `.md` files
-2. **External Ollama?** – if Ollama is already running elsewhere, provide its URL
+2. **External Ollama?** – if Ollama is already running elsewhere, provide its Docker service/container name on the shared network (and optionally override the URL)
 3. **Publish API on the host?** – `No` keeps rag-api reachable only inside Docker; `Yes` exposes it on `127.0.0.1:8484`
 4. **Require bearer token?** – prompted for both modes; see access modes below
 5. **External Docker network?** – name of an existing network to join (e.g. `npm-net`); leave empty to use the default `rag-network`
 
 Then:
-- Ollama starts (first run: pulls `nomic-embed-text`, ~1 min)
+- Ollama starts (first run: pulls `nomic-embed-text`, ~1 min) unless you use an existing external Ollama
 - `rag-api` starts and indexing begins in the background
 - macOS notification + terminal output when ready
 
@@ -83,22 +94,28 @@ To keep auth even on the internal network, set `AUTH_REQUIRED=true` and pass the
 
 ## Testing
 
+If you run in internal mode on a shared Docker network such as `npm-net`, test from another container on that network:
+
 ```bash
 # Health check (no auth required)
-curl -s http://localhost:8484/health
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s http://rag-api:8080/health
 
 # Indexing status
-curl -s http://localhost:8484/status \
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s http://rag-api:8080/status \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 
 # Semantic search
-curl -s http://localhost:8484/search \
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s http://rag-api:8080/search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "heat pump noises", "top_k": 3}'
 
 # Keyword search
-curl -s http://localhost:8484/keyword-search \
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s http://rag-api:8080/keyword-search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "ProductCard"}'
@@ -108,14 +125,16 @@ curl -s http://localhost:8484/keyword-search \
 
 ```bash
 # Logs
-docker logs -f rag-api
+docker compose logs -f rag-api
 
 # Manual reindex
-curl -s -X POST http://localhost:8484/reindex \
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s -X POST http://rag-api:8080/reindex \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 
 # Statistics
-curl -s http://localhost:8484/stats \
+docker run --rm --network npm-net curlimages/curl:8.7.1 \
+  -s http://rag-api:8080/stats \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 
 # Stop
@@ -133,5 +152,6 @@ It also includes lean OpenAI/Anthropic-compatible tool definitions and a compati
 
 ## Notes
 
-- **GPU**: Ollama uses the Metal GPU on Apple Silicon.
-- **File Watcher**: Uses `PollingObserver` (every 5 sec) because inotify events are unreliable over Docker bind-mounts on macOS.
+- **Image**: Pre-built and published to `ghcr.io/duongel/rag-api` on every release. No local build required.
+- **GPU**: Ollama uses the Metal GPU on Apple Silicon; on Linux it uses CUDA or CPU depending on your Ollama setup.
+- **File Watcher**: Uses `InotifyObserver` on Linux (real kernel events, zero overhead). Falls back to `PollingObserver` on macOS.
