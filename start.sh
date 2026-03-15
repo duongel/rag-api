@@ -14,19 +14,20 @@ _DEFAULT_RAG_API_SERVICE="rag-api"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ── Argument parsing ──────────────────────────────────────────────────────
-DATA_SOURCES="all"
-for arg in "$@"; do
-  case "$arg" in
-    --obsidian-only)  DATA_SOURCES="obsidian"  ;;
-    --paperless-only) DATA_SOURCES="paperless" ;;
-    *) die "Unknown argument: $arg\nUsage: ./start.sh [--obsidian-only | --paperless-only]" ;;
-  esac
-done
-
 # ── Helpers ───────────────────────────────────────────────────────────────
+# die() must be defined before argument parsing so unknown flags print a proper error.
 
 die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
+
+# _update_env KEY VALUE [KEY VALUE …]  –  atomically update key=value pairs in .env
+_update_env() {
+  local args=()
+  while [[ $# -ge 2 ]]; do
+    args+=(-e "s|^$1=.*|$1=$2|")
+    shift 2
+  done
+  sed -i.bak "${args[@]}" .env && rm -f .env.bak
+}
 
 _summary() {
   if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
@@ -60,21 +61,21 @@ _draw_bar() {
 
 _json_int() {
   # _json_int "$json_string" "field_name" → integer or 0
-  echo "$1" | grep -o "\"$2\":[0-9]*" | grep -o '[0-9]*' || echo "0"
+  echo "$1" | grep -o "\"$2\":[0-9]*" | grep -o '[0-9]*' | head -1 || echo "0"
 }
 
 _compose() {
   local files=(-f docker-compose.yml)
   [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
-  [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
-  [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && files+=(-f docker-compose.paperless.yml)
+  [[ "${ACCESS_MODE:-host}" == "host" ]]       && files+=(-f docker-compose.host.yml)
+  [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]]        && files+=(-f docker-compose.paperless.yml)
   docker compose "${files[@]}" "$@"
 }
 
 _validate_config() {
   if [[ "${DATA_SOURCES:-all}" != "paperless" ]]; then
     [[ -n "${VAULT_PATH:-}" ]] || die "VAULT_PATH is required when DATA_SOURCES=${DATA_SOURCES:-all}."
-    [[ -d "${VAULT_PATH}" ]] || die "VAULT_PATH does not exist: ${VAULT_PATH}"
+    [[ -d "${VAULT_PATH}" ]]   || die "VAULT_PATH does not exist: ${VAULT_PATH}"
   fi
 }
 
@@ -82,11 +83,9 @@ _api_get() {
   local path=$1
   if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
     local url="http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${path}"
-    if [[ "${AUTH_REQUIRED:-true}" == "true" ]]; then
-      curl -sf -H "Authorization: Bearer ${API_BEARER_TOKEN}" "$url"
-    else
-      curl -sf "$url"
-    fi
+    local -a curl_args=(-sf)
+    [[ "${AUTH_REQUIRED:-true}" == "true" ]] && curl_args+=(-H "Authorization: Bearer ${API_BEARER_TOKEN}")
+    curl "${curl_args[@]}" "$url"
   else
     _compose exec -T "${_DEFAULT_RAG_API_SERVICE}" python -c '
 import sys, urllib.request
@@ -101,6 +100,71 @@ with urllib.request.urlopen(req, timeout=5) as resp:
   fi
 }
 
+# ── Shared prompt helpers (used by both fresh setup and .env reuse) ───────
+
+_prompt_vault_path() {
+  while true; do
+    printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
+    read -r VAULT_PATH
+    VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
+    if [[ -d "$VAULT_PATH" ]]; then
+      VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
+      echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
+      return 0
+    fi
+    echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
+  done
+}
+
+_prompt_paperless_path() {
+  # Sets PAPERLESS_ARCHIVE_PATH; empty string means the user chose to skip.
+  while true; do
+    printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
+    read -r PAPERLESS_ARCHIVE_PATH
+    PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
+    if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+      if [[ "$DATA_SOURCES" == "paperless" ]]; then
+        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – no Paperless documents will be indexed.${NC}\n"
+      else
+        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
+      fi
+      return 0
+    fi
+    if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
+      PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
+      echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
+      return 0
+    fi
+    echo -e "${RED}❌ Directory not found: $PAPERLESS_ARCHIVE_PATH${NC}"
+  done
+}
+
+_prompt_paperless_api() {
+  # Sets PAPERLESS_URL, PAPERLESS_TOKEN, PAPERLESS_PUBLIC_URL (all may remain empty).
+  echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
+  read -r PAPERLESS_URL
+  if [[ -n "$PAPERLESS_URL" ]]; then
+    echo -n "🔑 Paperless API token: "
+    read -rs PAPERLESS_TOKEN; echo ""
+    echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
+    echo -e "      can open the source document in your Paperless UI."
+    echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
+    echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
+    read -r PAPERLESS_PUBLIC_URL
+    echo -e "   ${GREEN}✓${NC} Paperless: $PAPERLESS_URL\n"
+  fi
+}
+
+# ── Argument parsing ──────────────────────────────────────────────────────
+DATA_SOURCES="all"
+for arg in "$@"; do
+  case "$arg" in
+    --obsidian-only)  DATA_SOURCES="obsidian"  ;;
+    --paperless-only) DATA_SOURCES="paperless" ;;
+    *) die "Unknown argument: $arg\nUsage: ./start.sh [--obsidian-only | --paperless-only]" ;;
+  esac
+done
+
 # ── Prerequisites ─────────────────────────────────────────────────────────
 
 docker info > /dev/null 2>&1 || die "Docker is not running. Please start the Docker daemon and try again."
@@ -110,64 +174,21 @@ echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 # ── Interactive setup (skipped when an existing .env is reused) ───────────
 
 _run_setup() {
-  local generated_token
-  local paperless_url="" paperless_token="" paperless_public_url="" paperless_archive_path=""
+  local generated_token=""
   local ollama_service_name=""
+  PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL="" PAPERLESS_ARCHIVE_PATH=""
 
   # 1. Vault path – only when indexing Obsidian
   if [[ "$DATA_SOURCES" != "paperless" ]]; then
-    while true; do
-      printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
-      read -r VAULT_PATH
-      VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
-      if [[ -d "$VAULT_PATH" ]]; then
-        VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
-        echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
-        break
-      fi
-      echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
-    done
+    _prompt_vault_path
   else
     VAULT_PATH=""
   fi
 
   # 2. Paperless config – only when indexing Paperless
   if [[ "$DATA_SOURCES" != "obsidian" ]]; then
-    while true; do
-      printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
-      read -r paperless_archive_path
-      paperless_archive_path="${paperless_archive_path/#\~/$HOME}"
-      if [[ -z "$paperless_archive_path" ]]; then
-        if [[ "$DATA_SOURCES" == "paperless" ]]; then
-          echo -e "   ${YELLOW}⚠️  Paperless archive skipped – no Paperless documents will be indexed.${NC}\n"
-        else
-          echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
-        fi
-        break
-      fi
-      if [[ -d "$paperless_archive_path" ]]; then
-        paperless_archive_path="$(cd "$paperless_archive_path" && pwd)"
-        echo -e "   ${GREEN}✓${NC} $paperless_archive_path\n"
-        break
-      fi
-      echo -e "${RED}❌ Directory not found: $paperless_archive_path${NC}"
-    done
-
-    if [[ -n "$paperless_archive_path" ]]; then
-      echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
-      read -r paperless_url
-      if [[ -n "$paperless_url" ]]; then
-        echo -n "🔑 Paperless API token: "
-        read -rs paperless_token
-        echo ""
-        echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
-        echo -e "      can open the source document in your Paperless UI."
-        echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
-        echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
-        read -r paperless_public_url
-        echo -e "   ${GREEN}✓${NC} Paperless: $paperless_url\n"
-      fi
-    fi
+    _prompt_paperless_path
+    [[ -n "$PAPERLESS_ARCHIVE_PATH" ]] && _prompt_paperless_api
   fi
 
   # 3. Ollama – local or external?
@@ -191,16 +212,15 @@ _run_setup() {
     echo -e "   ${GREEN}✓${NC} Local Ollama will be started\n"
   fi
 
-  # 3. Access mode
+  # 4. Access mode
+  HOST_BIND_ADDRESS="$_DEFAULT_BIND"
+  HOST_PORT="$_DEFAULT_PORT"
   echo -n "🌐 Publish API on the host ($_DEFAULT_BIND:$_DEFAULT_PORT)? [Y/n] "
   read -r PUBLISH_HOST
 
   if [[ "$PUBLISH_HOST" =~ ^[nN]$ ]]; then
     ACCESS_MODE="internal"
-    HOST_BIND_ADDRESS="$_DEFAULT_BIND"
-    HOST_PORT="$_DEFAULT_PORT"
     PUBLIC_URL="http://rag-api:8080"
-
     echo -n "🔐 Require bearer token for internal-only mode? [y/N] "
     read -r REQUIRE_AUTH
     if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
@@ -209,20 +229,15 @@ _run_setup() {
       echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
     else
       AUTH_REQUIRED="false"
-      generated_token=""
       echo -e "   ${GREEN}✓${NC} Internal-only mode, no authentication (trusted network)\n"
     fi
   else
     ACCESS_MODE="host"
-    HOST_BIND_ADDRESS="$_DEFAULT_BIND"
-    HOST_PORT="$_DEFAULT_PORT"
     PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
-
     echo -n "🔐 Require bearer token? [Y/n] "
     read -r REQUIRE_AUTH
     if [[ "$REQUIRE_AUTH" =~ ^[nN]$ ]]; then
       AUTH_REQUIRED="false"
-      generated_token=""
       echo -e "   ${YELLOW}⚠️  Authentication disabled – API is open to anyone who can reach port ${HOST_PORT}.${NC}"
       echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
     else
@@ -232,7 +247,7 @@ _run_setup() {
     fi
   fi
 
-  # 4. Docker network (optional)
+  # 5. Docker network (optional)
   echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
   read -r DOCKER_NETWORK
   if [[ -n "$DOCKER_NETWORK" ]]; then
@@ -242,7 +257,7 @@ _run_setup() {
     echo -e "   ${GREEN}✓${NC} Using default network: rag-network\n"
   fi
 
-  # 5. Write .env
+  # 6. Write .env
   cat > .env <<EOF
 DATA_SOURCES=$DATA_SOURCES
 VAULT_PATH=$VAULT_PATH
@@ -255,10 +270,10 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
-PAPERLESS_ARCHIVE_PATH=$paperless_archive_path
-PAPERLESS_URL=$paperless_url
-PAPERLESS_TOKEN=$paperless_token
-PAPERLESS_PUBLIC_URL=$paperless_public_url
+PAPERLESS_ARCHIVE_PATH=$PAPERLESS_ARCHIVE_PATH
+PAPERLESS_URL=$PAPERLESS_URL
+PAPERLESS_TOKEN=$PAPERLESS_TOKEN
+PAPERLESS_PUBLIC_URL=$PAPERLESS_PUBLIC_URL
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
   if [[ "$AUTH_REQUIRED" == "true" ]]; then
@@ -276,8 +291,9 @@ if [[ -f .env ]]; then
   EXISTING_VAULT=$(grep -E '^VAULT_PATH=' .env | cut -d= -f2-)
   EXISTING_PAPERLESS=$(grep -E '^PAPERLESS_ARCHIVE_PATH=' .env | cut -d= -f2-)
   _env_valid=false
-  [[ -n "$EXISTING_VAULT" && -d "$EXISTING_VAULT" ]] && _env_valid=true
+  [[ -n "$EXISTING_VAULT"     && -d "$EXISTING_VAULT"     ]] && _env_valid=true
   [[ -n "$EXISTING_PAPERLESS" && -d "$EXISTING_PAPERLESS" ]] && _env_valid=true
+
   if [[ "$_env_valid" == true ]]; then
     echo -e "${BOLD}📄 Existing .env found:${NC}"
     grep -v '^#' .env | grep -v '^[[:space:]]*$' | while IFS='=' read -r key val; do
@@ -310,15 +326,17 @@ if [[ -f .env ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${_DEFAULT_RAG_API_SERVICE}:8080}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
       fi
-      # Only add the token if auth is required but none exists yet
+
+      # Mint a new token if auth is required but none exists yet
       if [[ "${AUTH_REQUIRED}" == "true" && -z "${API_BEARER_TOKEN:-}" ]]; then
         API_BEARER_TOKEN="$(openssl rand -hex 32)"
         printf '\nAPI_BEARER_TOKEN=%s\n' "$API_BEARER_TOKEN" >> .env
         echo -e "${YELLOW}⚠️  No API token found in .env – a new token was added.${NC}"
         echo -e "   ${BOLD}${API_BEARER_TOKEN}${NC}\n"
       fi
-      # Persist DATA_SOURCES back to .env so the effective value is always visible
-      sed -i.bak "s|^DATA_SOURCES=.*|DATA_SOURCES=${DATA_SOURCES}|" .env && rm -f .env.bak
+
+      # Persist effective DATA_SOURCES back to .env
+      _update_env DATA_SOURCES "$DATA_SOURCES"
 
       # ── Fill in any paths that are now required but missing ──────────────
       # This happens when e.g. the first run used --obsidian-only and the second
@@ -327,66 +345,32 @@ if [[ -f .env ]]; then
       # Vault path needed but missing
       if [[ "$DATA_SOURCES" != "paperless" && (-z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}") ]]; then
         echo -e "${YELLOW}⚠️  VAULT_PATH is missing or invalid. Please provide it now.${NC}"
-        while true; do
-          printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
-          read -r VAULT_PATH
-          VAULT_PATH="${VAULT_PATH/#\~/$HOME}"
-          if [[ -d "$VAULT_PATH" ]]; then
-            VAULT_PATH="$(cd "$VAULT_PATH" && pwd)"
-            echo -e "   ${GREEN}✓${NC} $VAULT_PATH\n"
-            sed -i.bak "s|^VAULT_PATH=.*|VAULT_PATH=${VAULT_PATH}|" .env && rm -f .env.bak
-            break
-          fi
-          echo -e "${RED}❌ Directory not found: $VAULT_PATH${NC}"
-        done
+        _prompt_vault_path
+        _update_env VAULT_PATH "$VAULT_PATH"
       fi
 
       # Paperless archive path needed but missing
       if [[ "$DATA_SOURCES" != "obsidian" && (-z "${PAPERLESS_ARCHIVE_PATH:-}" || ! -d "${PAPERLESS_ARCHIVE_PATH:-}") ]]; then
         echo -e "${YELLOW}⚠️  PAPERLESS_ARCHIVE_PATH is missing or invalid. Please provide it now.${NC}"
-        while true; do
-          printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
-          read -r PAPERLESS_ARCHIVE_PATH
-          PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
-          if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
-            echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
-            DATA_SOURCES="obsidian"
-            sed -i.bak "s|^DATA_SOURCES=.*|DATA_SOURCES=obsidian|" .env && rm -f .env.bak
-            break
+        _prompt_paperless_path
+        if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+          DATA_SOURCES="obsidian"
+          _update_env DATA_SOURCES "obsidian"
+        else
+          _update_env PAPERLESS_ARCHIVE_PATH "$PAPERLESS_ARCHIVE_PATH"
+          # Also prompt for API URL + token if not yet configured
+          if [[ -z "${PAPERLESS_URL:-}" ]]; then
+            _prompt_paperless_api
+            _update_env \
+              PAPERLESS_URL          "$PAPERLESS_URL" \
+              PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
+              PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
           fi
-          if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
-            PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
-            echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
-            sed -i.bak "s|^PAPERLESS_ARCHIVE_PATH=.*|PAPERLESS_ARCHIVE_PATH=${PAPERLESS_ARCHIVE_PATH}|" .env && rm -f .env.bak
-            # Also prompt for API URL + token if not yet set
-            if [[ -z "${PAPERLESS_URL:-}" ]]; then
-              echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
-              read -r PAPERLESS_URL
-              if [[ -n "$PAPERLESS_URL" ]]; then
-                echo -n "🔑 Paperless API token: "
-                read -rs PAPERLESS_TOKEN
-                echo ""
-                echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
-                read -r PAPERLESS_PUBLIC_URL
-                sed -i.bak \
-                  -e "s|^PAPERLESS_URL=.*|PAPERLESS_URL=${PAPERLESS_URL}|" \
-                  -e "s|^PAPERLESS_TOKEN=.*|PAPERLESS_TOKEN=${PAPERLESS_TOKEN}|" \
-                  -e "s|^PAPERLESS_PUBLIC_URL=.*|PAPERLESS_PUBLIC_URL=${PAPERLESS_PUBLIC_URL}|" \
-                  .env && rm -f .env.bak
-                echo -e "   ${GREEN}✓${NC} Paperless: $PAPERLESS_URL\n"
-              fi
-            fi
-            break
-          fi
-          echo -e "${RED}❌ Directory not found: $PAPERLESS_ARCHIVE_PATH${NC}"
-        done
+        fi
       fi
 
-      if [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]]; then
-        LOCAL_OLLAMA=true
-      else
-        LOCAL_OLLAMA=false
-      fi
+      LOCAL_OLLAMA=false
+      [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]] && LOCAL_OLLAMA=true
       echo -e "${GREEN}✅ Using existing .env${NC}\n"
     fi
   else
