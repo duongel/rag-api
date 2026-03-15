@@ -66,7 +66,7 @@ Then:
 - `rag-api` starts and indexing begins in the background
 - macOS notification + terminal output when ready
 
-> **Re-run behaviour:** `DATA_SOURCES` is persisted in `.env`. Re-running without a flag keeps the stored value — so a previous `--obsidian-only` run silently stays obsidian-only on the next bare `./start.sh`. To switch, either pass the flag explicitly (e.g. `./start.sh --paperless-only`) or answer **n** to the "Use this configuration?" prompt, which re-runs the full setup wizard with the CLI-provided value (no flag = `all`).
+> **Re-run behaviour:** The CLI flag always wins — including the default `all` when no flag is passed. So running `./start.sh` without a flag after a previous `--obsidian-only` setup will switch to indexing both sources (Obsidian + Paperless) when answering **Y** to "Use this configuration?". To stay on a specific source, always pass the flag explicitly (e.g. `./start.sh --obsidian-only`). The effective `DATA_SOURCES` value is written back to `.env` after every run.
 
 ### Docker image
 
