@@ -3,6 +3,8 @@
 [![Release](https://img.shields.io/github/v/release/duongel/rag-api)](https://github.com/duongel/rag-api/releases)
 [![Docker Image](https://ghcr.io/duongel/rag-api)](https://github.com/duongel/rag-api/pkgs/container/rag-api)
 
+> **TL;DR** — One command indexes your Obsidian vault and Paperless-NGX documents and exposes `/search` and `/keyword-search` endpoints that any LLM agent, n8n workflow, or custom client can query. Runs entirely inside Docker alongside your existing services — no cloud, no subscriptions. [`SKILL.md`](./SKILL.md) ships ready-to-use tool definitions for OpenAI- and Anthropic-compatible agents.
+
 Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in Docker.
 
 ## Architecture
@@ -22,11 +24,16 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 All services run inside a Docker network. Host port publishing is optional.  
 All data-bearing endpoints require a bearer token by default.
 
+## Agent / LLM Integration
+
+[`SKILL.md`](./SKILL.md) documents every endpoint with curl examples, ready-to-use tool definitions (OpenAI- and Anthropic-compatible), and a compatibility matrix. Pass it as context to any LLM agent — no MCP required.
+
 ## Requirements
 
 - Linux (x86_64 or arm64) or macOS
 - Docker Engine (or Docker Desktop on macOS) running
-- `curl`
+- `curl` (for the one-liner bootstrap)
+- `git`
 
 ## Installation
 
@@ -37,16 +44,6 @@ curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh |
 ```
 
 Clones the repo to `~/rag-api` and runs the interactive setup. Safe to re-run — updates an existing installation.
-
-### Manual
-
-### One-liner (recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
-```
-
-This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step – the pre-built image is pulled from GHCR automatically.
 
 ### Manual (advanced / development)
 
@@ -69,6 +66,8 @@ Then:
 - Ollama starts (first run: pulls `nomic-embed-text`, ~1 min) unless you use an existing external Ollama
 - `rag-api` starts and indexing begins in the background
 - macOS notification + terminal output when ready
+
+> **Re-run behaviour:** `DATA_SOURCES` is persisted in `.env`. Re-running without a flag keeps the stored value — so a previous `--obsidian-only` run silently stays obsidian-only on the next bare `./start.sh`. To switch, either pass the flag explicitly (e.g. `./start.sh --paperless-only`) or answer **n** to the "Use this configuration?" prompt, which re-runs the full setup wizard with the CLI-provided value (no flag = `all`).
 
 ### Docker image
 
@@ -179,12 +178,6 @@ docker compose down
 # Stop and delete all data
 docker compose down -v
 ```
-
-## Agent Skill
-
-[`SKILL.md`](./SKILL.md) documents all endpoints with curl examples.
-It can be passed as context to any agent (OpenAI, Anthropic, Copilot, …).
-It also includes lean OpenAI/Anthropic-compatible tool definitions and a compatibility matrix – no MCP required.
 
 ## Notes
 
