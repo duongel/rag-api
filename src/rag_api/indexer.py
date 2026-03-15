@@ -150,10 +150,20 @@ class Indexer:
         except Exception:
             pass
         try:
-            # Legacy chunks (pre-source schema): stored without a source field.
-            # Deleting them on first reindex prevents duplicate search hits after
-            # upgrading from an older chroma_data volume.
-            self.collection.delete(where={"file_path": {"$eq": file_path}})
+            # Legacy chunks (pre-source schema): no source field stored.
+            # Fetch by file_path, then delete only IDs that lack a source field
+            # to avoid accidentally removing same-path chunks from the other source.
+            results = self.collection.get(
+                where={"file_path": {"$eq": file_path}},
+                include=["metadatas"],
+            )
+            legacy_ids = [
+                id_
+                for id_, meta in zip(results["ids"], results["metadatas"])
+                if "source" not in meta
+            ]
+            if legacy_ids:
+                self.collection.delete(ids=legacy_ids)
         except Exception:
             pass
         self._file_hashes.pop(doc_key, None)
