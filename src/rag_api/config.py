@@ -28,6 +28,16 @@ CHUNK_MIN_LENGTH = 500
 # Chunks shorter than this are discarded (too noisy for embeddings).
 CHUNK_DISCARD_LENGTH = 5
 
+# Maximum chunk size (chars). Chunks exceeding this are recursively split
+# at the next-best boundary (---, paragraph, newline, hard cut).
+# 1500 chars ≈ 200–400 tokens – well within nomic-embed-text's 8192 context
+# and in the sweet spot for retrieval quality.
+MAX_CHUNK_SIZE = 1500
+
+# Overlap (chars) when a chunk must be hard-split at MAX_CHUNK_SIZE.
+# Preserves context across chunk boundaries.
+CHUNK_OVERLAP = 200
+
 # Polling interval in seconds for the file watcher (PollingObserver).
 # Used as fallback on macOS where inotify is unavailable inside Docker bind mounts.
 POLL_INTERVAL = 5
