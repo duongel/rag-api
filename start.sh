@@ -67,8 +67,10 @@ _json_int() {
 _compose() {
   local files=(-f docker-compose.yml)
   [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
-  [[ "${ACCESS_MODE:-host}" == "host" ]]       && files+=(-f docker-compose.host.yml)
-  [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]]        && files+=(-f docker-compose.paperless.yml)
+  [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
+  if [[ "${DATA_SOURCES:-all}" != "obsidian" ]] && [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && [[ -d "${PAPERLESS_ARCHIVE_PATH}" ]]; then
+    files+=(-f docker-compose.paperless.yml)
+  fi
   docker compose "${files[@]}" "$@"
 }
 
