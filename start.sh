@@ -5,6 +5,10 @@ set -e
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
+# ── Defaults (single source of truth) ────────────────────────────────────
+_DEFAULT_BIND="127.0.0.1"
+_DEFAULT_PORT="8484"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -14,7 +18,7 @@ die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 
 _summary() {
   if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8484}${NC}"
+    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
   else
     echo -e "   API:     ${BLUE}internal Docker network only${NC}"
     echo -e "   Network: ${BOLD}${DOCKER_NETWORK:-rag-network}${NC}"
@@ -53,7 +57,7 @@ _compose() {
 _api_get() {
   local path=$1
   if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    local url="http://${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8484}${path}"
+    local url="http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${path}"
     if [[ "${AUTH_REQUIRED:-true}" == "true" ]]; then
       curl -sf -H "Authorization: Bearer ${API_BEARER_TOKEN}" "$url"
     else
@@ -116,13 +120,13 @@ _run_setup() {
   fi
 
   # 3. Access mode
-  echo -n "🌐 Publish API on the host (127.0.0.1:8484)? [Y/n] "
+  echo -n "🌐 Publish API on the host ($_DEFAULT_BIND:$_DEFAULT_PORT)? [Y/n] "
   read -r PUBLISH_HOST
 
   if [[ "$PUBLISH_HOST" =~ ^[nN]$ ]]; then
     ACCESS_MODE="internal"
-    HOST_BIND_ADDRESS="127.0.0.1"
-    HOST_PORT="8484"
+    HOST_BIND_ADDRESS="$_DEFAULT_BIND"
+    HOST_PORT="$_DEFAULT_PORT"
     PUBLIC_URL="http://rag-api:8080"
 
     echo -n "🔐 Require bearer token for internal-only mode? [y/N] "
@@ -138,9 +142,9 @@ _run_setup() {
     fi
   else
     ACCESS_MODE="host"
-    HOST_BIND_ADDRESS="127.0.0.1"
-    HOST_PORT="8484"
-    PUBLIC_URL="http://localhost:8484"
+    HOST_BIND_ADDRESS="$_DEFAULT_BIND"
+    HOST_PORT="$_DEFAULT_PORT"
+    PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
 
     echo -n "🔐 Require bearer token? [Y/n] "
     read -r REQUIRE_AUTH
@@ -198,8 +202,8 @@ if [[ -f .env ]]; then
       # Load values from existing .env
       set -a; source .env; set +a
       ACCESS_MODE="${ACCESS_MODE:-host}"
-      HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-127.0.0.1}"
-      HOST_PORT="${HOST_PORT:-8484}"
+      HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
+      HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
       if [[ "$ACCESS_MODE" == "host" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
@@ -207,18 +211,11 @@ if [[ -f .env ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://rag-api:8080}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
       fi
-      if [[ "${AUTH_REQUIRED:-true}" == "true" && -z "${API_BEARER_TOKEN:-}" ]]; then
+      # Only add the token if auth is required but none exists yet
+      if [[ "${AUTH_REQUIRED}" == "true" && -z "${API_BEARER_TOKEN:-}" ]]; then
         API_BEARER_TOKEN="$(openssl rand -hex 32)"
-        {
-          echo ""
-          echo "ACCESS_MODE=$ACCESS_MODE"
-          echo "HOST_BIND_ADDRESS=$HOST_BIND_ADDRESS"
-          echo "HOST_PORT=$HOST_PORT"
-          echo "PUBLIC_URL=$PUBLIC_URL"
-          echo "AUTH_REQUIRED=$AUTH_REQUIRED"
-          echo "API_BEARER_TOKEN=$API_BEARER_TOKEN"
-        } >> .env
-        echo -e "${YELLOW}⚠️  Existing .env had no API token. A new token was added.${NC}"
+        printf '\nAPI_BEARER_TOKEN=%s\n' "$API_BEARER_TOKEN" >> .env
+        echo -e "${YELLOW}⚠️  No API token found in .env – a new token was added.${NC}"
         echo -e "   ${BOLD}${API_BEARER_TOKEN}${NC}\n"
       fi
       if [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]]; then
