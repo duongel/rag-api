@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/duongel/rag-api/master/.github/logo.svg" alt="RAG API" width="120">
+<img src=".github/logo.svg" alt="RAG API" width="120">
 
 # RAG API
 
