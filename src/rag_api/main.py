@@ -83,7 +83,7 @@ def _register_paperless_webhook():
         # Paperless-NGX ≥2.x uses /api/share_links/ or custom scripts,
         # but the post-consume webhook is configured via /api/workflows/
         # Paginate through all workflow pages to avoid creating duplicates
-        existing_workflows: set[str] = set()  # tracks "reindex" / "removal"
+        found_existing = False
         url: str | None = f"{PAPERLESS_URL}/api/workflows/"
         while url:
             resp = requests.get(url, headers=headers, timeout=10)
@@ -95,12 +95,7 @@ def _register_paperless_webhook():
             for wf in data.get("results", []):
                 for action in wf.get("actions", []):
                     if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
-                        # Identify workflow by name
-                        wf_name = wf.get("name", "")
-                        if "removal" in wf_name:
-                            existing_workflows.add("removal")
-                        else:
-                            existing_workflows.add("reindex")
+                        found_existing = True
                         # Ensure headers (e.g. auth token) are up to date
                         existing_headers = action.get("webhook", {}).get("headers", {})
                         if existing_headers != webhook_headers:
@@ -120,80 +115,49 @@ def _register_paperless_webhook():
                             logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
             url = data.get("next")
 
-        # Create reindex workflow if not already registered
-        if "reindex" not in existing_workflows:
-            workflow_data = {
-                "name": "rag-api reindex",
-                "enabled": True,
-                "triggers": [
-                    {
-                        "type": "consumption",
-                        "sources": ["consume_folder", "api_upload", "mail_fetch"],
-                        "filter_filename": "*",
-                    }
-                ],
-                "actions": [
-                    {
-                        "type": "webhook",
-                        "webhook": {
-                            "url": webhook_url,
-                            "use_params": False,
-                            "params": {},
-                            "body": '{"document_id": {document_id}, "action": "updated"}',
-                            "headers": webhook_headers,
-                        },
-                    }
-                ],
-            }
-            resp = requests.post(
-                f"{PAPERLESS_URL}/api/workflows/",
-                json=workflow_data,
-                headers=headers,
-                timeout=10,
-            )
-            if resp.ok:
-                logger.info("Registered Paperless webhook workflow → %s", webhook_url)
-            else:
-                logger.warning(
-                    "Failed to create Paperless webhook workflow (HTTP %d): %s",
-                    resp.status_code,
-                    resp.text[:200],
-                )
+        if found_existing:
+            return
 
-        # Register a removal workflow for document deletion events
-        if "removal" not in existing_workflows:
-            removal_data = {
-                "name": "rag-api removal",
-                "enabled": True,
-                "triggers": [
-                    {
-                        "type": "document_removed",
-                    }
-                ],
-                "actions": [
-                    {
-                        "type": "webhook",
-                        "webhook": {
-                            "url": webhook_url,
-                            "use_params": False,
-                            "params": {},
-                            "body": '{"document_id": {document_id}, "action": "deleted"}',
-                            "headers": webhook_headers,
-                        },
-                    }
-                ],
-            }
-            resp = requests.post(
-                f"{PAPERLESS_URL}/api/workflows/",
-                json=removal_data,
-                headers=headers,
-                timeout=10,
+        # Create workflow for consumption events (add/update).
+        # Paperless-NGX does not support deletion triggers, so deleted
+        # documents are cleaned up during the next full reindex.
+        workflow_data = {
+            "name": "rag-api reindex",
+            "enabled": True,
+            "triggers": [
+                {
+                    "type": "consumption",
+                    "sources": ["consume_folder", "api_upload", "mail_fetch"],
+                    "filter_filename": "*",
+                }
+            ],
+            "actions": [
+                {
+                    "type": "webhook",
+                    "webhook": {
+                        "url": webhook_url,
+                        "use_params": False,
+                        "params": {},
+                        "body": '{"document_id": {document_id}, "action": "updated"}',
+                        "headers": webhook_headers,
+                    },
+                }
+            ],
+        }
+        resp = requests.post(
+            f"{PAPERLESS_URL}/api/workflows/",
+            json=workflow_data,
+            headers=headers,
+            timeout=10,
+        )
+        if resp.ok:
+            logger.info("Registered Paperless webhook workflow → %s", webhook_url)
+        else:
+            logger.warning(
+                "Failed to create Paperless webhook workflow (HTTP %d): %s",
+                resp.status_code,
+                resp.text[:200],
             )
-            if resp.ok:
-                logger.info("Registered Paperless removal webhook workflow → %s", webhook_url)
-            else:
-                # Older Paperless versions may not support document_removed triggers
-                logger.info("Could not register removal webhook (HTTP %d) — deletions handled during full reindex", resp.status_code)
     except Exception as e:
         logger.warning("Paperless webhook registration failed: %s", e)
 
