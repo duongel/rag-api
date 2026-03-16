@@ -302,27 +302,25 @@ def _paperless_api_data(file_path: str) -> dict:
     Returns ``{"content": "...", "meta": {...}}`` on success.
     The *content* key contains the OCR text that Paperless already extracted,
     avoiding a redundant (and inferior) ``pypdf`` parse.
+    ``meta`` always includes ``paperless_doc_id`` when found.
     Returns ``{}`` on any failure so the caller can fall back to ``parse_pdf``.
     """
     from .config import PAPERLESS_URL, PAPERLESS_TOKEN
     if not PAPERLESS_URL or not PAPERLESS_TOKEN:
         return {}
 
-    stem = Path(file_path).stem
-    if not stem.isdigit():
-        return {}
-
     import requests
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
     try:
-        resp = requests.get(
-            f"{PAPERLESS_URL}/api/documents/{stem}/",
-            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
-            timeout=5,
-        )
-        if not resp.ok:
+        data = _fetch_paperless_document(file_path, PAPERLESS_URL, headers)
+        if not data:
             return {}
-        data = resp.json()
+
+        doc_id = data.get("id")
         meta: dict = {}
+        if doc_id is not None:
+            meta["paperless_doc_id"] = str(doc_id)
         if data.get("title"):
             meta["title"] = data["title"]
         if data.get("correspondent"):
@@ -339,3 +337,34 @@ def _paperless_api_data(file_path: str) -> dict:
         return result
     except Exception:
         return {}
+
+
+def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
+    """Fetch a single Paperless document, looking up by ID or archive filename."""
+    import requests
+
+    stem = Path(file_path).stem
+    # Fast path: numeric filename IS the document ID
+    if stem.isdigit():
+        resp = requests.get(
+            f"{base_url}/api/documents/{stem}/",
+            headers=headers,
+            timeout=5,
+        )
+        if resp.ok:
+            return resp.json()
+
+    # Slow path: search by archive filename
+    filename = Path(file_path).name
+    resp = requests.get(
+        f"{base_url}/api/documents/",
+        params={"query": f"archive_filename:{filename}", "page_size": 1},
+        headers=headers,
+        timeout=10,
+    )
+    if resp.ok:
+        results = resp.json().get("results", [])
+        if results:
+            return results[0]
+
+    return None
