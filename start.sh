@@ -22,17 +22,6 @@ die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 _needs_obsidian()  { [[ "${DATA_SOURCES:-all}" != "paperless" ]]; }
 _needs_paperless() { [[ "${DATA_SOURCES:-all}" != "obsidian"  ]]; }
 
-_prompt_required() {
-  local prompt=$1 secret=${2:-false}
-  while true; do
-    echo -n "$prompt"
-    if [[ "$secret" == true ]]; then read -rs REPLY; echo ""
-    else read -r REPLY; fi
-    [[ -n "$REPLY" ]] && { printf '%s' "$REPLY"; return 0; }
-    echo -e "${RED}❌ This field is required.${NC}"
-  done
-}
-
 _show_token() {
   local token=$1
   if [[ -n "$token" ]]; then
@@ -75,8 +64,10 @@ _summary() {
   if [[ "${ACCESS_MODE:-host}" == "internal" ]]; then
     echo -e "   API:     ${BLUE}internal Docker network only${NC}"
     echo -e "   Network: ${BOLD}${DOCKER_NETWORK:-rag-network}${NC}"
+  elif [[ "${ACCESS_MODE:-host}" == "network" ]]; then
+    echo -e "   API:     ${BLUE}http://0.0.0.0:${HOST_PORT:-$_DEFAULT_PORT}${NC} (all interfaces)"
   else
-    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
+    echo -e "   API:     ${BLUE}http://localhost:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
   fi
   echo -e "   Logs:    ${BOLD}docker compose logs -f ${_DEFAULT_RAG_API_SERVICE}${NC}"
   echo -e "   Stop:    ${BOLD}docker compose down${NC}"
@@ -123,6 +114,11 @@ _validate_config() {
   if _needs_paperless; then
     [[ -n "${PAPERLESS_URL:-}" ]]   || die "PAPERLESS_URL is required when DATA_SOURCES=${DATA_SOURCES:-all}."
     [[ -n "${PAPERLESS_TOKEN:-}" ]] || die "PAPERLESS_TOKEN is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+    if [[ "${ACCESS_MODE:-host}" == "network" ]]; then
+      local _default="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+      [[ -n "${RAG_API_INTERNAL_URL:-}" && "${RAG_API_INTERNAL_URL}" != "$_default" ]] \
+        || die "RAG_API_INTERNAL_URL must be set to a Paperless-reachable URL in network mode."
+    fi
   fi
 }
 
@@ -149,6 +145,19 @@ with urllib.request.urlopen(req, timeout=5) as resp:
 }
 
 # ── Shared prompt helpers (used by both fresh setup and .env reuse) ───────
+
+_prompt_webhook_url() {
+  echo -e "   ${BLUE}ℹ️  Paperless needs a URL to reach rag-api for webhook callbacks.${NC}"
+  echo -e "      Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT:-$_DEFAULT_PORT})."
+  echo -n "🔗 Webhook callback URL: "
+  read -r RAG_API_INTERNAL_URL
+  while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
+    echo -e "${RED}❌ This field is required in network mode.${NC}"
+    echo -n "🔗 Webhook callback URL: "
+    read -r RAG_API_INTERNAL_URL
+  done
+  echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
+}
 
 _prompt_vault_path() {
   while true; do
@@ -294,20 +303,11 @@ _run_setup() {
   # 5. Webhook callback URL (network + paperless only)
   RAG_API_INTERNAL_URL="http://${_DEFAULT_RAG_API_SERVICE}:8080"
   if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
-    echo -e "   ${BLUE}ℹ️  Paperless needs a URL to reach rag-api for webhook callbacks.${NC}"
-    echo -e "      Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT})."
-    echo -n "🔗 Webhook callback URL: "
-    read -r RAG_API_INTERNAL_URL
-    while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
-      echo -e "${RED}❌ This field is required in network mode.${NC}"
-      echo -n "🔗 Webhook callback URL: "
-      read -r RAG_API_INTERNAL_URL
-    done
-    echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
+    _prompt_webhook_url
   fi
 
   # 6. Docker network (optional)
-  echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
+  echo -n "🐳 External Docker network to join (leave empty for default 'rag-network'): "
   read -r DOCKER_NETWORK
   if [[ -n "$DOCKER_NETWORK" ]]; then
     echo -e "   ${GREEN}✓${NC} Will join network: $DOCKER_NETWORK\n"
@@ -316,7 +316,7 @@ _run_setup() {
     echo -e "   ${GREEN}✓${NC} Using default network: rag-network\n"
   fi
 
-  # 6. Write .env
+  # 7. Write .env
   cat > .env <<EOF
 DATA_SOURCES=$DATA_SOURCES
 VAULT_PATH=$VAULT_PATH
@@ -422,20 +422,13 @@ if [[ -f .env ]]; then
 
       # Webhook callback URL needed but missing in network mode
       if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
-        local _default_url="http://${_DEFAULT_RAG_API_SERVICE}:8080"
-        if [[ -z "${RAG_API_INTERNAL_URL:-}" || "$RAG_API_INTERNAL_URL" == "$_default_url" ]]; then
+        _rag_default="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+        if [[ -z "${RAG_API_INTERNAL_URL:-}" || "$RAG_API_INTERNAL_URL" == "$_rag_default" ]]; then
           echo -e "${YELLOW}⚠️  Network mode requires a webhook callback URL reachable from Paperless.${NC}"
-          echo -e "   Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT})."
-          echo -n "🔗 Webhook callback URL: "
-          read -r RAG_API_INTERNAL_URL
-          while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
-            echo -e "${RED}❌ This field is required in network mode.${NC}"
-            echo -n "🔗 Webhook callback URL: "
-            read -r RAG_API_INTERNAL_URL
-          done
+          _prompt_webhook_url
           _update_env RAG_API_INTERNAL_URL "$RAG_API_INTERNAL_URL"
-          echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
         fi
+        unset _rag_default
       fi
 
       LOCAL_OLLAMA=false
