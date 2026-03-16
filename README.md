@@ -16,13 +16,18 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 │   + ChromaDB       │     │   GPU (optional)     │
 │   + File Watcher   │     └──────────────────────┘
 │                    │◄── /vault (read-only mount)
+│                    │
+│                    │◀──▶ Paperless-NGX REST API
+│                    │◀─── Paperless webhook
 └────────────────────┘
         │
    rag-network (or any external Docker network)
 ```
 
 All services run inside a Docker network. Host port publishing is optional.  
-All data-bearing endpoints require a bearer token by default.
+All data-bearing endpoints require a bearer token by default.  
+Paperless documents are indexed via the REST API — no archive mount needed.  
+A webhook is auto-registered in Paperless for real-time updates.
 
 ## Agent / LLM Integration
 
@@ -55,11 +60,13 @@ chmod +x start.sh
 
 The setup script asks:
 
-1. **Path to vault** – directory containing the `.md` files
-2. **External Ollama?** – if Ollama is already running elsewhere, provide its Docker service/container name on the shared network (and optionally override the URL)
-3. **Publish API on the host?** – `No` keeps rag-api reachable only inside Docker; `Yes` exposes it on `127.0.0.1:8484`
-4. **Require bearer token?** – prompted for both modes; see access modes below
-5. **External Docker network?** – name of an existing network to join (e.g. `npm-net`); leave empty to use the default `rag-network`
+1. **Path to vault** – directory containing the `.md` files (skipped with `--paperless-only`)
+2. **Paperless URL + API token** – connects to the Paperless REST API for indexing (skipped with `--obsidian-only`)
+3. **Paperless public URL** – optional, used to build direct links in search results
+4. **External Ollama?** – if Ollama is already running elsewhere, provide its Docker service/container name on the shared network (and optionally override the URL)
+5. **Publish API on the host?** – `No` keeps rag-api reachable only inside Docker; `Yes` exposes it on `127.0.0.1:8484`
+6. **Require bearer token?** – prompted for both modes; see access modes below
+7. **External Docker network?** – name of an existing network to join (e.g. `npm-net`); leave empty to use the default `rag-network`
 
 Then:
 - Ollama starts (first run: pulls `nomic-embed-text`, ~1 min) unless you use an existing external Ollama
@@ -182,4 +189,6 @@ docker compose down -v
 
 - **Image**: Pre-built and published to `ghcr.io/duongel/rag-api` on every release. No local build required.
 - **GPU**: Ollama uses the Metal GPU on Apple Silicon; on Linux it uses CUDA or CPU depending on your Ollama setup.
-- **File Watcher**: Uses `InotifyObserver` on Linux (real kernel events, zero overhead). Falls back to `PollingObserver` on macOS.
+- **File Watcher**: Uses `InotifyObserver` on Linux (real kernel events, zero overhead). Falls back to `PollingObserver` on macOS. Only watches Obsidian vault — Paperless uses webhooks.
+- **Paperless Webhook**: A workflow webhook is auto-registered in Paperless on startup. Newly added, updated, or deleted documents are re-indexed in real-time without a full reindex.
+- **Data Sources**: Use `--obsidian-only` or `--paperless-only` to limit indexing to a single source. Default indexes both.
