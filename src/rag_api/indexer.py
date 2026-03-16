@@ -106,18 +106,14 @@ class Indexer:
         if source == "paperless":
             stored_file_hash = self._file_hashes.get(doc_key)
 
-            # Fast path: file unchanged and previously indexed with API data
-            if stored_file_hash == file_hash and doc_key in self._api_content_hashes:
-                return False
-
             api_data = _paperless_api_data(file_path, cache=self._paperless_cache)
             api_content = api_data.get("content", "")
             if api_content:
                 api_content_hash = hashlib.sha256(api_content.encode()).hexdigest()
 
             if stored_file_hash == file_hash:
-                # PDF bytes unchanged, but no api_content_hash stored yet
-                # (upgrade from pre-API version)
+                # PDF bytes unchanged — check whether API content changed
+                # (e.g. Paperless re-OCR or metadata edit)
                 if not api_content:
                     # API unavailable — can't detect content edits, keep existing index
                     return False
@@ -453,9 +449,6 @@ def _fetch_paperless_document(
             # Collect basename matches to check uniqueness
             if Path(archive_fn).name == filename:
                 basename_matches.append(doc)
-                # Two or more basename matches → ambiguous, stop early
-                if len(basename_matches) > 1:
-                    return None
 
         if not data.get("next"):
             break
