@@ -1,3 +1,15 @@
+# [1.3.0](https://github.com/duongel/rag-api/compare/v1.2.0...v1.3.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* handle missing TTY during installer setup ([f292ca5](https://github.com/duongel/rag-api/commit/f292ca5ccc39c8422577adf66071e90c2e97d77c))
+
+
+### Features
+
+* improve CI workflows and install script TTY handling ([b4e1ea3](https://github.com/duongel/rag-api/commit/b4e1ea36044740fc57146c1b3e932881560880a9))
+
 # [1.2.0](https://github.com/duongel/rag-api/compare/v1.1.0...v1.2.0) (2026-03-15)
 
 
