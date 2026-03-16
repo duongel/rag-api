@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/duongel/rag-api/compare/v1.4.0...v1.4.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* clean up api_content_hashes entry when removing a file ([59bf99d](https://github.com/duongel/rag-api/commit/59bf99d8ded6439c7c9714e4110f579fd88a8902))
+
 # [1.4.0](https://github.com/duongel/rag-api/compare/v1.3.0...v1.4.0) (2026-03-16)
 
 
