@@ -167,7 +167,29 @@ class Indexer:
         doc_key = self._doc_key("paperless", file_path)
 
         content_hash = hashlib.sha256(content.encode()).hexdigest()
-        if self._api_content_hashes.get(doc_key) == content_hash:
+
+        # Check if the doc was already indexed under a different path (rename/move).
+        # If so, skip the hash short-circuit so old paths get cleaned up.
+        path_changed = False
+        for existing_key, src in list(self._file_sources.items()):
+            if src != "paperless":
+                continue
+            existing_fp = self._file_path_from_key(existing_key)
+            if existing_fp == file_path:
+                continue
+            # Check if this key belongs to the same doc via Chroma metadata
+            try:
+                results = self.collection.get(
+                    where={"$and": [{"file_path": existing_fp}, {"paperless_doc_id": str(doc_id)}]},
+                    include=[],
+                )
+                if results["ids"]:
+                    path_changed = True
+                    break
+            except Exception:
+                pass
+
+        if not path_changed and self._api_content_hashes.get(doc_key) == content_hash:
             return False  # unchanged
 
         # Remove all existing entries for this doc ID (handles renamed archive files)
@@ -335,7 +357,11 @@ class Indexer:
             try:
                 resp = requests.get(
                     f"{PAPERLESS_URL}/api/documents/",
-                    params={"page": page, "page_size": 100},
+                    params={
+                        "page": page,
+                        "page_size": 100,
+                        "fields": "id,content,archive_filename,title,correspondent,tags,created",
+                    },
                     headers=headers,
                     timeout=30,
                 )
