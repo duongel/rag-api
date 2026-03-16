@@ -1,3 +1,39 @@
+# [1.7.0](https://github.com/duongel/rag-api/compare/v1.6.1...v1.7.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* address 2 unresolved PR review comments ([f2f05f4](https://github.com/duongel/rag-api/commit/f2f05f41d7ae86ddff7d9a7523754c18ff8b4561))
+* address 2 unresolved PR review comments ([5f0b234](https://github.com/duongel/rag-api/commit/5f0b2349d19cec3ddf4300fe3ddd12e0f33bd840))
+* address 3 unresolved PR review comments ([d73b9df](https://github.com/duongel/rag-api/commit/d73b9df5c34676b8098886a17a06fbf243b8c6d7))
+* address unresolved PR review comments ([ad26cb5](https://github.com/duongel/rag-api/commit/ad26cb5f5c55c452cdb75a9c52098661e62b4087))
+* always use Docker service name for webhook callback URL ([1ebf99d](https://github.com/duongel/rag-api/commit/1ebf99dc87f6ccaca66664b05f0655e5a195246d))
+* check PAPERLESS_TOKEN in .env reuse, clear stale index on empty content ([7989283](https://github.com/duongel/rag-api/commit/79892837f20124394eb5ff691f47c143062c811d))
+* ensure full reindex gets content and handle path changes ([48293d7](https://github.com/duongel/rag-api/commit/48293d7d45a0654adb17390c1b3a66085969cb9a))
+* guard cleanup on partial fetch and require auth for webhook ([95c1e2f](https://github.com/duongel/rag-api/commit/95c1e2f02b393de557dc767d490d3c176fb22e8c))
+* guard empty-content removal and skip disabled workflows ([681a400](https://github.com/duongel/rag-api/commit/681a4003c1fefc4a62b837b10b340e249d4d7b67))
+* handle empty Paperless instance cleanup and paginate workflow lookup ([0dbefe7](https://github.com/duongel/rag-api/commit/0dbefe70e79ff5bd357dfd15de7b5a871311f640))
+* include bearer token in Paperless webhook registration ([a937edb](https://github.com/duongel/rag-api/commit/a937edbcd05f101b84668876b1032509764623ec))
+* **main:** remove non-existent document_removed webhook trigger ([1f846bb](https://github.com/duongel/rag-api/commit/1f846bb11b85a7546b7bfb6ec3839cb0ec6fbe55))
+* make webhook auth conditional on AUTH_REQUIRED ([f906fb2](https://github.com/duongel/rag-api/commit/f906fb2c99d73a391099e616312046f5e9dd3be1))
+* propagate webhook failures and fix header update race ([14241e6](https://github.com/duongel/rag-api/commit/14241e645ab9513a1495619eecf3cb51d3d15f56))
+* reconcile webhook headers on token change, clarify action semantics ([3512479](https://github.com/duongel/rag-api/commit/3512479274aedbf37e71aa06281fe841ab07342f))
+* register removal webhook and clean all doc paths on empty content ([8ceaade](https://github.com/duongel/rag-api/commit/8ceaadebe9572d8eb7803a772b8d4180abebbb9a))
+* robust webhook URL handling for network access mode ([ed04f40](https://github.com/duongel/rag-api/commit/ed04f40c7bee26830008b98a80e262173b82a7eb))
+* **start:** write RAG_API_INTERNAL_URL to .env during setup ([3665ee5](https://github.com/duongel/rag-api/commit/3665ee59d8907935bd046db156c30361d9352f00))
+* use relative path for logo ([ad4e3b9](https://github.com/duongel/rag-api/commit/ad4e3b9bd98c2c2f2d7804cb44919d9b461f17fa))
+
+
+### Features
+
+* add network access mode for cross-machine deployments ([8daf276](https://github.com/duongel/rag-api/commit/8daf2765662a9f464ba4004f1b0d1781e1b6d160))
+* API-driven Paperless indexing with webhook support ([b36a0a4](https://github.com/duongel/rag-api/commit/b36a0a435396ec29774cf8147c83e8dd9545144c))
+
+
+### Reverts
+
+* remove auth from webhook endpoint ([c569237](https://github.com/duongel/rag-api/commit/c56923721809caf9920cbd35416fb70eb521cec2))
+
 ## [1.6.1](https://github.com/duongel/rag-api/compare/v1.6.0...v1.6.1) (2026-03-16)
 
 
