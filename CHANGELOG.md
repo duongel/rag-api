@@ -1,3 +1,18 @@
+# [1.4.0](https://github.com/duongel/rag-api/compare/v1.3.0...v1.4.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* chunking bug when chunks is None ([46652ba](https://github.com/duongel/rag-api/commit/46652baea8ac7423033ec08953b307f52b6f2d10))
+* document reindexing if ocr text changes, even if pdf file did not change ([2ca0507](https://github.com/duongel/rag-api/commit/2ca0507c483938ce576165a6971b6e99802324c9))
+* progressbar cursor position now aligned correctly ([315e29a](https://github.com/duongel/rag-api/commit/315e29a56d88bddd1bc7b63014c1beb5d2fadf5f))
+* track raw file hash and API content hash separately ([8ea0059](https://github.com/duongel/rag-api/commit/8ea0059c993b2cace931502031922f4d31914de4))
+
+
+### Features
+
+* improved indexing speed, fix: missing tty for one-liner install via ssh, fix: ghcr.io auto publish ([1c2dc62](https://github.com/duongel/rag-api/commit/1c2dc62d83f240aed12e30fed5fb8dcf54a36a95))
+
 # [1.3.0](https://github.com/duongel/rag-api/compare/v1.2.0...v1.3.0) (2026-03-16)
 
 
