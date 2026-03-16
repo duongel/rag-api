@@ -41,7 +41,6 @@ for f in \
   docker-compose.yml \
   docker-compose.host.yml \
   docker-compose.obsidian.yml \
-  docker-compose.paperless.yml \
   start.sh
 do
   curl -fsSL "$BASE/$f" -o "$INSTALL_DIR/$f"

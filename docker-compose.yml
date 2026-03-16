@@ -27,6 +27,7 @@ services:
       PAPERLESS_URL: "${PAPERLESS_URL:-}"
       PAPERLESS_TOKEN: "${PAPERLESS_TOKEN:-}"
       PAPERLESS_PUBLIC_URL: "${PAPERLESS_PUBLIC_URL:-}"
+      RAG_API_INTERNAL_URL: "${RAG_API_INTERNAL_URL:-http://rag-api:8080}"
       WATCHER_POLLING: "${WATCHER_POLLING:-false}"
     restart: unless-stopped
     networks:
