@@ -164,8 +164,18 @@ _prompt_vault_path() {
 }
 
 _prompt_paperless_api() {
-  PAPERLESS_URL=$(_prompt_required "🌐 Paperless URL (e.g. http://paperless:8000): ")
-  PAPERLESS_TOKEN=$(_prompt_required "🔑 Paperless API token: " true)
+  while true; do
+    echo -n "🌐 Paperless URL (e.g. http://paperless:8000): "
+    read -r PAPERLESS_URL
+    [[ -n "$PAPERLESS_URL" ]] && break
+    echo -e "${RED}❌ This field is required.${NC}"
+  done
+  while true; do
+    echo -n "🔑 Paperless API token: "
+    read -rs PAPERLESS_TOKEN; echo ""
+    [[ -n "$PAPERLESS_TOKEN" ]] && break
+    echo -e "${RED}❌ This field is required.${NC}"
+  done
   echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
   echo -e "      can open the source document in your Paperless UI."
   echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
