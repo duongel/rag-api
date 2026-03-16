@@ -30,14 +30,8 @@ if [[ ! -t 0 ]]; then
   fi
 fi
 
-if [[ -d "$INSTALL_DIR" ]]; then
-  if [[ -f "$INSTALL_DIR/start.sh" && -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-    echo -e "${BOLD}🔄 Updating existing installation in ${INSTALL_DIR}...${NC}"
-  else
-    echo -e "${RED}❌ Directory exists but doesn't look like a rag-api installation:${NC} ${INSTALL_DIR}" >&2
-    echo -e "${YELLOW}   Refusing to overwrite unrelated files. Set INSTALL_DIR to another path.${NC}" >&2
-    exit 1
-  fi
+if [[ -d "$INSTALL_DIR" && -f "$INSTALL_DIR/start.sh" && -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+  echo -e "${BOLD}🔄 Updating existing installation in ${INSTALL_DIR}...${NC}"
 else
   echo -e "${BOLD}📦 Installing RAG API into ${INSTALL_DIR}...${NC}"
   mkdir -p "$INSTALL_DIR"
