@@ -171,6 +171,8 @@ class Indexer:
         if self._api_content_hashes.get(doc_key) == content_hash:
             return False  # unchanged
 
+        # Remove all existing entries for this doc ID (handles renamed archive files)
+        self._remove_all_paths_for_paperless_doc(doc_id)
         self.remove_file(file_path, source="paperless")
 
         meta: dict = {"paperless_doc_id": str(doc_id)}
@@ -423,23 +425,46 @@ class Indexer:
 
     def remove_paperless_doc(self, doc_id: int):
         """Remove a Paperless document from the index by its ID."""
+        # Collect all file paths for this doc (synthetic path + metadata matches)
+        paths_to_remove: set[str] = set()
+
+        synthetic = f"paperless/{doc_id}.pdf"
+        if self._doc_key("paperless", synthetic) in self._file_hashes:
+            paths_to_remove.add(synthetic)
+
         for doc_key in list(self._file_hashes):
             if self._file_sources.get(doc_key, "obsidian") != "paperless":
                 continue
             fp = self._file_path_from_key(doc_key)
-            # Check both the synthetic path and metadata
-            if fp == f"paperless/{doc_id}.pdf":
-                self.remove_file(fp, source="paperless")
-                return
-        # Also search by paperless_doc_id in metadata
+            if fp == synthetic:
+                paths_to_remove.add(fp)
+
         try:
             results = self.collection.get(
                 where={"paperless_doc_id": str(doc_id)},
                 include=["metadatas"],
             )
             if results["ids"]:
-                file_paths = set(m.get("file_path", "") for m in results["metadatas"])
-                for fp in file_paths:
+                for m in results["metadatas"]:
+                    fp = m.get("file_path", "")
+                    if fp:
+                        paths_to_remove.add(fp)
+        except Exception:
+            pass
+
+        for fp in paths_to_remove:
+            self.remove_file(fp, source="paperless")
+
+    def _remove_all_paths_for_paperless_doc(self, doc_id: int):
+        """Remove all indexed paths associated with a Paperless document ID."""
+        try:
+            results = self.collection.get(
+                where={"paperless_doc_id": str(doc_id)},
+                include=["metadatas"],
+            )
+            if results["ids"]:
+                for m in results["metadatas"]:
+                    fp = m.get("file_path", "")
                     if fp:
                         self.remove_file(fp, source="paperless")
         except Exception:
