@@ -124,10 +124,15 @@ def _enrich_source_url(result: dict) -> dict:
     source = result.get("source", "obsidian")
     file_path = result.get("file_path", "")
     if source == "paperless" and PAPERLESS_PUBLIC_URL:
-        stem = Path(file_path).stem
-        if stem.isdigit():
+        doc_id = result.get("paperless_doc_id", "")
+        if not doc_id:
+            # Fallback: numeric filename IS the document ID
+            stem = Path(file_path).stem
+            if stem.isdigit():
+                doc_id = stem
+        if doc_id:
             result["source_url"] = (
-                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(stem)}/details"
+                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(doc_id)}/details"
             )
     elif source == "obsidian":
         result["source_url"] = (
