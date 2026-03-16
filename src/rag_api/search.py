@@ -1,5 +1,6 @@
 """Semantic and keyword search across the indexed Obsidian vault."""
 
+import re
 from pathlib import Path
 
 from .config import VAULT_PATH, DATA_SOURCES
@@ -198,8 +199,14 @@ class Searcher:
     # ------------------------------------------------------------------
 
     def keyword_search(self, query: str, top_k: int = 10) -> list[dict]:
-        """Search filenames and document content for *query* (case-insensitive)."""
+        """Search filenames and document content for *query* (case-insensitive).
+
+        Scoring is based on match location, word-boundary matches, and
+        frequency so that results containing the query more often or as a
+        whole word rank higher.
+        """
         query_lower = query.lower()
+        word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
         results: list[dict] = []
         seen: set[str] = set()
 
@@ -238,55 +245,52 @@ class Searcher:
                 )
                 seen.add(f"{source}::{fp}")
 
-        # 2) Content matches via ChromaDB $contains (case-sensitive)
+        # 2) Content matches — always case-insensitive via full scan
         try:
-            matches = self.collection.get(
-                where_document={"$contains": query},
-                include=["documents", "metadatas"],
-            )
-            for i, doc in enumerate(matches["documents"] or []):
-                meta = matches["metadatas"][i]
+            all_docs = self.collection.get(include=["documents", "metadatas"])
+            for i, doc in enumerate(all_docs["documents"] or []):
+                if query_lower not in doc.lower():
+                    continue
+                meta = all_docs["metadatas"][i]
                 key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
-                if key not in seen:
-                    results.append(
-                        {
-                            "file_path": meta["file_path"],
-                            "section": meta.get("section", ""),
-                            "content": doc[:1000],
-                            "score": 0.9,
-                            "match_type": "content",
-                            "source": meta.get("source", "obsidian"),
-                        }
-                    )
-                    seen.add(key)
+                if key in seen:
+                    continue
+                score = self._keyword_score(doc, query_lower, word_pattern)
+                results.append(
+                    {
+                        "file_path": meta["file_path"],
+                        "section": meta.get("section", ""),
+                        "content": doc[:1000],
+                        "score": score,
+                        "match_type": "content",
+                        "source": meta.get("source", "obsidian"),
+                    }
+                )
+                seen.add(key)
         except Exception:
             pass
 
-        # 3) Fallback: case-insensitive scan if nothing found yet
-        if not results:
-            try:
-                all_docs = self.collection.get(include=["documents", "metadatas"])
-                for i, doc in enumerate(all_docs["documents"] or []):
-                    if query_lower in doc.lower():
-                        meta = all_docs["metadatas"][i]
-                        key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
-                        if key not in seen:
-                            results.append(
-                                {
-                                    "file_path": meta["file_path"],
-                                    "section": meta.get("section", ""),
-                                    "content": doc[:1000],
-                                    "score": 0.8,
-                                    "match_type": "content",
-                                    "source": meta.get("source", "obsidian"),
-                                }
-                            )
-                            seen.add(key)
-            except Exception:
-                pass
-
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:top_k]
+
+    @staticmethod
+    def _keyword_score(
+        doc: str, query_lower: str, word_pattern: re.Pattern[str]
+    ) -> float:
+        """Compute a relevance score for a keyword match.
+
+        Base score is 0.70.  Bonuses:
+        - frequency:  +0.03 per occurrence (max +0.15)
+        - whole-word: +0.05 if at least one word-boundary match
+        - position:   +0.05 if first hit is in the first 20 % of the chunk
+        """
+        doc_lower = doc.lower()
+        count = doc_lower.count(query_lower)
+        freq_bonus = min(count * 0.03, 0.15)
+        word_bonus = 0.05 if word_pattern.search(doc) else 0.0
+        pos = doc_lower.find(query_lower)
+        pos_bonus = 0.05 if pos >= 0 and pos < len(doc) * 0.2 else 0.0
+        return round(0.70 + freq_bonus + word_bonus + pos_bonus, 4)
 
     # ------------------------------------------------------------------
     # Single note retrieval
