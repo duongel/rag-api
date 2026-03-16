@@ -27,6 +27,8 @@ class Indexer:
         self._file_hashes: dict[str, str] = {}
         # Maps file_path key → source ("obsidian" | "paperless")
         self._file_sources: dict[str, str] = {}
+        # Tracks API content hashes separately for Paperless documents
+        self._api_content_hashes: dict[str, str] = {}
         self.link_graph = LinkGraph()
         self._load_file_hashes()
 
@@ -43,7 +45,7 @@ class Indexer:
     # ------------------------------------------------------------------
 
     def _load_file_hashes(self):
-        """Bootstrap ``_file_hashes`` and ``_file_sources`` from existing collection metadata."""
+        """Bootstrap ``_file_hashes``, ``_file_sources``, and ``_api_content_hashes`` from existing collection metadata."""
         try:
             results = self.collection.get(include=["metadatas"])
             for meta in results["metadatas"] or []:
@@ -54,6 +56,9 @@ class Indexer:
                     doc_key = self._doc_key(source, fp)
                     self._file_hashes[doc_key] = fh
                     self._file_sources[doc_key] = source
+                    ach = meta.get("api_content_hash")
+                    if ach:
+                        self._api_content_hashes[doc_key] = ach
         except Exception:
             pass
 
@@ -90,21 +95,30 @@ class Indexer:
         doc_key = self._doc_key(source, file_path)
         file_hash = self._file_content_hash(full_path)
 
-        # For Paperless documents, fetch API data early so the OCR content
-        # participates in change detection.  If the API text changes (user
-        # edits in Paperless) but the PDF file stays the same, we still
-        # detect the change and re-index.
+        # For Paperless documents, fetch API data early so OCR content changes
+        # are detected.  The raw PDF hash and the API content hash are tracked
+        # independently so that a temporary API outage does NOT invalidate
+        # an already-indexed document.
         api_data: dict = {}
+        api_content_hash = ""
         if source == "paperless":
             api_data = _paperless_api_data(file_path)
             api_content = api_data.get("content", "")
             if api_content:
-                file_hash = hashlib.sha256(
-                    (file_hash + api_content).encode()
-                ).hexdigest()
+                api_content_hash = hashlib.sha256(api_content.encode()).hexdigest()
 
-        if self._file_hashes.get(doc_key) == file_hash:
-            return False  # nothing changed
+            stored_file_hash = self._file_hashes.get(doc_key)
+            if stored_file_hash == file_hash:
+                # PDF bytes unchanged
+                if not api_content:
+                    # API unavailable — can't detect content edits, keep existing index
+                    return False
+                if self._api_content_hashes.get(doc_key) == api_content_hash:
+                    # API content also unchanged
+                    return False
+        else:
+            if self._file_hashes.get(doc_key) == file_hash:
+                return False  # nothing changed
 
         self.remove_file(file_path, source=source)
 
@@ -144,6 +158,7 @@ class Indexer:
                 "file_hash": file_hash,
                 "chunk_index": i,
                 "source": source,
+                **({"api_content_hash": api_content_hash} if api_content_hash else {}),
                 **extra_meta,
             }
             for i, c in enumerate(chunks)
@@ -158,6 +173,10 @@ class Indexer:
 
         self._file_hashes[doc_key] = file_hash
         self._file_sources[doc_key] = source
+        if api_content_hash:
+            self._api_content_hashes[doc_key] = api_content_hash
+        else:
+            self._api_content_hashes.pop(doc_key, None)
         logger.info("Indexed %s [%s] (%d chunks)", file_path, source, len(chunks))
         return True
 
