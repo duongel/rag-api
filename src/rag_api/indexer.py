@@ -381,6 +381,18 @@ class Indexer:
         count = 0
         for processed, doc in enumerate(all_docs, start=1):
             try:
+                # List responses may omit content; fetch individual doc details.
+                if "content" not in doc and doc.get("id") is not None:
+                    try:
+                        detail = requests.get(
+                            f"{PAPERLESS_URL}/api/documents/{doc['id']}/",
+                            headers=headers,
+                            timeout=10,
+                        )
+                        if detail.ok:
+                            doc = detail.json()
+                    except Exception as e:
+                        logger.warning("Failed to fetch detail for doc %s: %s", doc["id"], e)
                 if self.index_paperless_doc(doc):
                     count += 1
             except Exception as e:
