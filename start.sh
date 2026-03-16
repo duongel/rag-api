@@ -441,7 +441,15 @@ fi
 echo ""
 
 # ── Wait for indexing (Ctrl+C skips, containers keep running) ────────────
-trap 'printf "\n\n"; echo -e "${YELLOW}⏳ Indexing continues in the background.${NC}"; _summary; exit 0' INT
+_on_interrupt() {
+  # Clear progress bar lines before printing the summary
+  [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA\r\033[J' "$_PROGRESS_LINES"
+  echo ""
+  echo -e "${YELLOW}⏳ Indexing continues in the background.${NC}"
+  _summary
+  exit 0
+}
+trap _on_interrupt INT
 
 echo -e "${YELLOW}⏳ Waiting for indexing...${NC} ${BOLD}(Ctrl+C to skip)${NC}"
 
@@ -469,7 +477,7 @@ while true; do
     PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")
     PAP_TOT=$(_json_int "$STATUS" "paperless_total")
     [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA' "$_PROGRESS_LINES"
-    _PROGRESS_LINES=2
+    _PROGRESS_LINES=1
     printf '\r\033[K   Obsidian:  '; _bar_str "$OBS_IDX" "$OBS_TOT"; printf '\n'
     printf '\r\033[K   Paperless: '; _bar_str "$PAP_IDX" "$PAP_TOT"
   else
