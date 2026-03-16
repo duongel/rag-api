@@ -302,27 +302,25 @@ def _paperless_api_data(file_path: str) -> dict:
     Returns ``{"content": "...", "meta": {...}}`` on success.
     The *content* key contains the OCR text that Paperless already extracted,
     avoiding a redundant (and inferior) ``pypdf`` parse.
+    ``meta`` always includes ``paperless_doc_id`` when found.
     Returns ``{}`` on any failure so the caller can fall back to ``parse_pdf``.
     """
     from .config import PAPERLESS_URL, PAPERLESS_TOKEN
     if not PAPERLESS_URL or not PAPERLESS_TOKEN:
         return {}
 
-    stem = Path(file_path).stem
-    if not stem.isdigit():
-        return {}
-
     import requests
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
     try:
-        resp = requests.get(
-            f"{PAPERLESS_URL}/api/documents/{stem}/",
-            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
-            timeout=5,
-        )
-        if not resp.ok:
+        data = _fetch_paperless_document(file_path, PAPERLESS_URL, headers)
+        if not data:
             return {}
-        data = resp.json()
+
+        doc_id = data.get("id")
         meta: dict = {}
+        if doc_id is not None:
+            meta["paperless_doc_id"] = str(doc_id)
         if data.get("title"):
             meta["title"] = data["title"]
         if data.get("correspondent"):
@@ -339,3 +337,60 @@ def _paperless_api_data(file_path: str) -> dict:
         return result
     except Exception:
         return {}
+
+
+def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
+    """Fetch a single Paperless document, looking up by ID or archive filename.
+
+    Uses a two-pass strategy: first tries an exact full-path match against
+    ``archive_filename``, then falls back to basename-only if no full-path
+    match was found *and* the basename is unambiguous (exactly one hit).
+    Paginates through all API results to guarantee the correct document
+    is found even when many files share the same basename.
+    """
+    import requests
+
+    stem = Path(file_path).stem
+    # Fast path: numeric filename IS the document ID
+    if stem.isdigit():
+        resp = requests.get(
+            f"{base_url}/api/documents/{stem}/",
+            headers=headers,
+            timeout=5,
+        )
+        if resp.ok:
+            return resp.json()
+
+    # Slow path: search by archive filename, paginate until exhausted
+    filename = Path(file_path).name
+    basename_matches: list[dict] = []
+    page = 1
+
+    while True:
+        resp = requests.get(
+            f"{base_url}/api/documents/",
+            params={"query": f"archive_filename:{filename}", "page": page, "page_size": 25},
+            headers=headers,
+            timeout=10,
+        )
+        if not resp.ok:
+            break
+
+        data = resp.json()
+        for doc in data.get("results", []):
+            archive_fn = doc.get("archive_filename", "")
+            # Exact full-path match — always preferred
+            if archive_fn == file_path:
+                return doc
+            # Collect all basename matches to check uniqueness later
+            if Path(archive_fn).name == filename:
+                basename_matches.append(doc)
+
+        if not data.get("next"):
+            break
+        page += 1
+
+    # Only use basename fallback when exactly one document matched (unambiguous)
+    if len(basename_matches) == 1:
+        return basename_matches[0]
+    return None
