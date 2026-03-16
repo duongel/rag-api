@@ -3,7 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/duongel/rag-api)](https://github.com/duongel/rag-api/releases)
 [![Docker Image](https://img.shields.io/github/v/release/duongel/rag-api?label=ghcr.io&logo=docker)](https://github.com/duongel/rag-api/pkgs/container/rag-api)
 
-> **TL;DR** — One command indexes your Obsidian vault and Paperless-NGX documents and exposes `/search` and `/keyword-search` endpoints that any LLM agent, n8n workflow, or custom client can query. Runs entirely inside Docker alongside your existing services — no cloud, no subscriptions. [`SKILL.md`](./SKILL.md) ships ready-to-use tool definitions for OpenAI- and Anthropic-compatible agents.
+> **TL;DR** — Makes Obsidian notes and Paperless-NGX documents available to all compatible agents via a ready-to-use [skill](./SKILL.md).
 
 Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in Docker.
 
