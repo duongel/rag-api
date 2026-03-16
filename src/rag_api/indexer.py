@@ -89,6 +89,20 @@ class Indexer:
 
         doc_key = self._doc_key(source, file_path)
         file_hash = self._file_content_hash(full_path)
+
+        # For Paperless documents, fetch API data early so the OCR content
+        # participates in change detection.  If the API text changes (user
+        # edits in Paperless) but the PDF file stays the same, we still
+        # detect the change and re-index.
+        api_data: dict = {}
+        if source == "paperless":
+            api_data = _paperless_api_data(file_path)
+            api_content = api_data.get("content", "")
+            if api_content:
+                file_hash = hashlib.sha256(
+                    (file_hash + api_content).encode()
+                ).hexdigest()
+
         if self._file_hashes.get(doc_key) == file_hash:
             return False  # nothing changed
 
@@ -106,12 +120,11 @@ class Indexer:
             chunks = parse_markdown(file_path, resolved_base)
         else:  # .pdf
             chunks = None
-            if source == "paperless":
-                api_data = _paperless_api_data(file_path)
+            if source == "paperless" and api_data:
                 extra_meta = api_data.get("meta", {})
-                api_content = api_data.get("content")
-                if api_content:
-                    chunks = parse_plaintext(file_path, api_content)
+                content = api_data.get("content")
+                if content:
+                    chunks = parse_plaintext(file_path, content)
             if chunks is None:
                 chunks = parse_pdf(file_path, resolved_base)
 
