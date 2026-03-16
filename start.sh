@@ -129,7 +129,8 @@ _validate_config() {
 _api_get() {
   local path=$1
   if [[ "${ACCESS_MODE:-host}" != "internal" ]]; then
-    local url="http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${path}"
+    # Always use 127.0.0.1 for local health checks (0.0.0.0 may not work on macOS)
+    local url="http://127.0.0.1:${HOST_PORT:-$_DEFAULT_PORT}${path}"
     local -a curl_args=(-sf)
     [[ "${AUTH_REQUIRED:-true}" == "true" ]] && curl_args+=(-H "Authorization: Bearer ${API_BEARER_TOKEN}")
     curl "${curl_args[@]}" "$url"
@@ -416,6 +417,24 @@ if [[ -f .env ]]; then
             PAPERLESS_URL          "$PAPERLESS_URL" \
             PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
             PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
+        fi
+      fi
+
+      # Webhook callback URL needed but missing in network mode
+      if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
+        local _default_url="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+        if [[ -z "${RAG_API_INTERNAL_URL:-}" || "$RAG_API_INTERNAL_URL" == "$_default_url" ]]; then
+          echo -e "${YELLOW}⚠️  Network mode requires a webhook callback URL reachable from Paperless.${NC}"
+          echo -e "   Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT})."
+          echo -n "🔗 Webhook callback URL: "
+          read -r RAG_API_INTERNAL_URL
+          while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
+            echo -e "${RED}❌ This field is required in network mode.${NC}"
+            echo -n "🔗 Webhook callback URL: "
+            read -r RAG_API_INTERNAL_URL
+          done
+          _update_env RAG_API_INTERNAL_URL "$RAG_API_INTERNAL_URL"
+          echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
         fi
       fi
 
