@@ -48,16 +48,18 @@ class Searcher:
 
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
-            output.append(
-                {
-                    "file_path": results["metadatas"][0][i]["file_path"],
-                    "section": results["metadatas"][0][i].get("section", ""),
-                    "content": results["documents"][0][i],
-                    "score": round(1 - results["distances"][0][i], 4),
-                    "match_type": "semantic",
-                    "source": results["metadatas"][0][i].get("source", "obsidian"),
-                }
-            )
+            meta = results["metadatas"][0][i]
+            entry: dict = {
+                "file_path": meta["file_path"],
+                "section": meta.get("section", ""),
+                "content": results["documents"][0][i],
+                "score": round(1 - results["distances"][0][i], 4),
+                "match_type": "semantic",
+                "source": meta.get("source", "obsidian"),
+            }
+            if meta.get("paperless_doc_id"):
+                entry["paperless_doc_id"] = meta["paperless_doc_id"]
+            output.append(entry)
 
         if expand_links:
             output = self._expand_with_links(output, query_embedding, top_k)
@@ -182,13 +184,16 @@ class Searcher:
             )
             if res["ids"][0]:
                 meta = res["metadatas"][0][0]
-                return {
+                entry: dict = {
                     "file_path": meta["file_path"],
                     "section": meta.get("section", ""),
                     "content": res["documents"][0][0],
                     "score": round(1 - res["distances"][0][0], 4),
                     "source": meta.get("source", "obsidian"),
                 }
+                if meta.get("paperless_doc_id"):
+                    entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                return entry
         except Exception:
             pass
         return None
@@ -248,16 +253,17 @@ class Searcher:
                 meta = matches["metadatas"][i]
                 key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                 if key not in seen:
-                    results.append(
-                        {
-                            "file_path": meta["file_path"],
-                            "section": meta.get("section", ""),
-                            "content": doc[:1000],
-                            "score": 0.9,
-                            "match_type": "content",
-                            "source": meta.get("source", "obsidian"),
-                        }
-                    )
+                    entry: dict = {
+                        "file_path": meta["file_path"],
+                        "section": meta.get("section", ""),
+                        "content": doc[:1000],
+                        "score": 0.9,
+                        "match_type": "content",
+                        "source": meta.get("source", "obsidian"),
+                    }
+                    if meta.get("paperless_doc_id"):
+                        entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                    results.append(entry)
                     seen.add(key)
         except Exception:
             pass
@@ -271,16 +277,17 @@ class Searcher:
                         meta = all_docs["metadatas"][i]
                         key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                         if key not in seen:
-                            results.append(
-                                {
-                                    "file_path": meta["file_path"],
-                                    "section": meta.get("section", ""),
-                                    "content": doc[:1000],
-                                    "score": 0.8,
-                                    "match_type": "content",
-                                    "source": meta.get("source", "obsidian"),
-                                }
-                            )
+                            entry: dict = {
+                                "file_path": meta["file_path"],
+                                "section": meta.get("section", ""),
+                                "content": doc[:1000],
+                                "score": 0.8,
+                                "match_type": "content",
+                                "source": meta.get("source", "obsidian"),
+                            }
+                            if meta.get("paperless_doc_id"):
+                                entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                            results.append(entry)
                             seen.add(key)
             except Exception:
                 pass
