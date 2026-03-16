@@ -1,27 +1,41 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/duongel/rag-api/master/.github/logo.svg" alt="RAG API" width="120">
+
 # RAG API
 
-[![Release](https://img.shields.io/github/v/release/duongel/rag-api)](https://github.com/duongel/rag-api/releases)
-[![Docker Image](https://img.shields.io/github/v/release/duongel/rag-api?label=ghcr.io&logo=docker)](https://github.com/duongel/rag-api/pkgs/container/rag-api)
+**Self-hosted RAG for Obsidian & Paperless-NGX**
 
-> **TL;DR** — Makes Obsidian notes and Paperless-NGX documents available to all compatible agents via a ready-to-use [skill](./SKILL.md).
+[![Release](https://img.shields.io/github/v/release/duongel/rag-api?style=flat-square&color=blue)](https://github.com/duongel/rag-api/releases)
+[![Docker Image](https://img.shields.io/github/v/release/duongel/rag-api?label=ghcr.io&logo=docker&style=flat-square&color=blue)](https://github.com/duongel/rag-api/pkgs/container/rag-api)
+[![License](https://img.shields.io/github/license/duongel/rag-api?style=flat-square&color=green)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
 
-Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in Docker.
+<br>
 
-## Architecture
+> Makes Obsidian notes and Paperless-NGX documents available to all compatible agents via a ready-to-use [skill](./SKILL.md).
 
-```
-┌────────────────────┐     ┌──────────────────────┐
-│   rag-api          │────▶│   ollama             │
-│   (Python/FastAPI) │     │   (nomic-embed-text) │
-│   + ChromaDB       │     │   GPU (optional)     │
-│   + File Watcher   │     └──────────────────────┘
-│                    │◄── /vault (read-only mount)
-│                    │
-│                    │◀──▶ Paperless-NGX REST API
-│                    │◀─── Paperless webhook
-└────────────────────┘
-        │
-   rag-network (or any external Docker network)
+</div>
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph LR
+    subgraph Docker Network
+        RAG["\ud83d\udce6 rag-api\nFastAPI + ChromaDB"]
+        OLL["\ud83e\udd99 ollama\nnomic-embed-text"]
+    end
+
+    VAULT["\ud83d\udcc1 Obsidian Vault"]:::external
+    PAPER["\ud83d\udcc4 Paperless-NGX"]:::external
+
+    RAG -->|embeddings| OLL
+    VAULT -->|read-only mount| RAG
+    PAPER <-->|REST API + webhook| RAG
+
+    classDef external fill:#f9f,stroke:#333,stroke-width:1px
 ```
 
 All services run inside a Docker network. Host port publishing is optional.  
@@ -29,17 +43,17 @@ All data-bearing endpoints require a bearer token by default.
 Paperless documents are indexed via the REST API — no archive mount needed.  
 A webhook is auto-registered in Paperless for real-time updates.
 
-## Agent / LLM Integration
+## 🤖 Agent / LLM Integration
 
 [`SKILL.md`](./SKILL.md) documents every endpoint with curl examples, ready-to-use tool definitions (OpenAI- and Anthropic-compatible), and a compatibility matrix. Pass it as context to any LLM agent — no MCP required.
 
-## Requirements
+## ⚙️ Requirements
 
 - Linux (x86_64 or arm64) or macOS
 - Docker Engine (or Docker Desktop on macOS) running
 - `curl`
 
-## Installation
+## 🚀 Installation
 
 ### One-liner (recommended)
 
@@ -88,7 +102,7 @@ Available tags: `latest`, `1.0.0`, `1.0`, …
 > **Note:** After the first automated release, the package must be set to **public** once:  
 > GitHub → Packages → `rag-api` → Package settings → Change visibility → Public
 
-## Updates
+## ⬆️ Updates
 
 ```bash
 # Re-run the installer – fetches latest files and restarts
@@ -98,7 +112,7 @@ curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh |
 cd ~/rag-api && git pull && ./start.sh
 ```
 
-## Access Modes
+## 🔐 Access Modes
 
 | Mode | Host port | Auth | `.env` |
 |---|---|---|---|
@@ -113,7 +127,7 @@ Set the token once in your shell when auth is enabled:
 export API_BEARER_TOKEN='<your-token>'
 ```
 
-## n8n Integration (same Docker host)
+## 🔗 n8n Integration (same Docker host)
 
 If n8n runs on the same machine, connect rag-api to its network during setup (e.g. `npm-net`) and choose internal mode without auth:
 
@@ -133,7 +147,7 @@ http://rag-api:8080/note?path=...
 
 To keep auth even on the internal network, set `AUTH_REQUIRED=true` and pass the bearer token from n8n.
 
-## Testing
+## 🧪 Testing
 
 If you run in internal mode on a shared Docker network such as `npm-net`, test from another container on that network:
 
@@ -162,7 +176,7 @@ docker run --rm --network npm-net curlimages/curl:8.7.1 \
   -d '{"query": "ProductCard"}'
 ```
 
-## Useful Commands
+## 🛠️ Useful Commands
 
 ```bash
 # Logs
@@ -185,7 +199,7 @@ docker compose down
 docker compose down -v
 ```
 
-## Notes
+## 📝 Notes
 
 - **Image**: Pre-built and published to `ghcr.io/duongel/rag-api` on every release. No local build required.
 - **GPU**: Ollama uses the Metal GPU on Apple Silicon; on Linux it uses CUDA or CPU depending on your Ollama setup.
