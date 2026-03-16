@@ -95,7 +95,23 @@ def _register_paperless_webhook():
         for wf in resp.json().get("results", []):
             for action in wf.get("actions", []):
                 if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
-                    logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
+                    # Ensure headers (e.g. auth token) are up to date
+                    existing_headers = action.get("webhook", {}).get("headers", {})
+                    if existing_headers != webhook_headers:
+                        logger.info("Updating webhook headers for workflow %d", wf["id"])
+                        action["webhook"]["headers"] = webhook_headers
+                        update_resp = requests.put(
+                            f"{PAPERLESS_URL}/api/workflows/{wf['id']}/",
+                            json=wf,
+                            headers=headers,
+                            timeout=10,
+                        )
+                        if update_resp.ok:
+                            logger.info("Webhook headers updated successfully")
+                        else:
+                            logger.warning("Failed to update webhook headers (HTTP %d)", update_resp.status_code)
+                    else:
+                        logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
                     return
 
         # Create a new workflow with webhook action
@@ -116,7 +132,9 @@ def _register_paperless_webhook():
                         "url": webhook_url,
                         "use_params": False,
                         "params": {},
-                        "body": '{"document_id": {document_id}, "action": "added"}',
+                        # Paperless consumption workflows trigger on add/update only.
+                        # Document deletions are handled during the next full reindex.
+                        "body": '{"document_id": {document_id}, "action": "updated"}',
                         "headers": webhook_headers,
                     },
                 }
