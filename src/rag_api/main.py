@@ -13,6 +13,7 @@ from .config import (
     OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN,
     OLLAMA_TIMEOUT_SECONDS,
     DATA_SOURCES, PAPERLESS_ARCHIVE_PATH, VAULT_PATH,
+    PAPERLESS_URL, PAPERLESS_TOKEN, RAG_API_INTERNAL_URL,
 )
 from .indexer import Indexer
 from .search import Searcher
@@ -26,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _INDEX_OBSIDIAN = DATA_SOURCES in ("obsidian", "all")
-_INDEX_PAPERLESS = DATA_SOURCES in ("paperless", "all") and bool(PAPERLESS_ARCHIVE_PATH)
+_INDEX_PAPERLESS = DATA_SOURCES in ("paperless", "all") and bool(PAPERLESS_URL) and bool(PAPERLESS_TOKEN)
 
 
 def _wait_for_ollama():
@@ -62,6 +63,78 @@ def _wait_for_ollama():
         time.sleep(5)
 
 
+def _register_paperless_webhook():
+    """Auto-register a consumption webhook in Paperless-NGX.
+
+    Checks whether a webhook pointing to rag-api already exists.  If not,
+    creates one so that document changes trigger real-time re-indexing.
+    Runs best-effort — failures are logged but don't block startup.
+    """
+    webhook_url = f"{RAG_API_INTERNAL_URL.rstrip('/')}/webhook/paperless"
+
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+    try:
+        # List existing consumption templates / webhooks
+        # Paperless-NGX ≥2.x uses /api/share_links/ or custom scripts,
+        # but the post-consume webhook is configured via /api/workflows/
+        resp = requests.get(
+            f"{PAPERLESS_URL}/api/workflows/",
+            headers=headers,
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning("Could not list Paperless workflows (HTTP %d) — skipping webhook registration", resp.status_code)
+            return
+
+        # Check if a workflow already points to our webhook URL
+        for wf in resp.json().get("results", []):
+            for action in wf.get("actions", []):
+                if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
+                    logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
+                    return
+
+        # Create a new workflow with webhook action
+        workflow_data = {
+            "name": "rag-api reindex",
+            "enabled": True,
+            "triggers": [
+                {
+                    "type": "consumption",
+                    "sources": ["consume_folder", "api_upload", "mail_fetch"],
+                    "filter_filename": "*",
+                }
+            ],
+            "actions": [
+                {
+                    "type": "webhook",
+                    "webhook": {
+                        "url": webhook_url,
+                        "use_params": False,
+                        "params": {},
+                        "body": '{"document_id": {document_id}, "action": "added"}',
+                        "headers": {"Content-Type": "application/json"},
+                    },
+                }
+            ],
+        }
+        resp = requests.post(
+            f"{PAPERLESS_URL}/api/workflows/",
+            json=workflow_data,
+            headers=headers,
+            timeout=10,
+        )
+        if resp.ok:
+            logger.info("Registered Paperless webhook workflow → %s", webhook_url)
+        else:
+            logger.warning(
+                "Failed to create Paperless webhook workflow (HTTP %d): %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+    except Exception as e:
+        logger.warning("Paperless webhook registration failed: %s", e)
+
+
 def main():
     if AUTH_REQUIRED and not API_BEARER_TOKEN:
         raise RuntimeError(
@@ -73,16 +146,11 @@ def main():
             f"Obsidian indexing is enabled but VAULT_PATH does not exist in the container: {VAULT_PATH}"
         )
 
-    index_paperless = _INDEX_PAPERLESS
-    if _INDEX_PAPERLESS and not Path(PAPERLESS_ARCHIVE_PATH).exists():
-        logger.warning(
-            "Paperless indexing is enabled but PAPERLESS_ARCHIVE_PATH does not exist: %s. "
-            "Skipping Paperless reindex to avoid cleanup of previously indexed documents.",
-            PAPERLESS_ARCHIVE_PATH,
-        )
-        index_paperless = False
-
-    logger.info("Data sources: %s (paperless archive: %s)", DATA_SOURCES, PAPERLESS_ARCHIVE_PATH or "not configured")
+    logger.info(
+        "Data sources: %s (paperless API: %s)",
+        DATA_SOURCES,
+        PAPERLESS_URL or "not configured",
+    )
     _wait_for_ollama()
 
     logger.info("Initialising indexer …")
@@ -93,7 +161,7 @@ def main():
     api.indexer = indexer
     api.searcher = search
     api.indexing_status = {
-        "indexing": _INDEX_OBSIDIAN or index_paperless,
+        "indexing": _INDEX_OBSIDIAN or _INDEX_PAPERLESS,
         "indexed_files": 0,
         "total_files": 0,
         "obsidian_indexed": 0,
@@ -120,10 +188,9 @@ def main():
                 indexer.full_reindex(
                     on_progress=lambda p, t: _on_progress(p, t, "obsidian")
                 )
-            if index_paperless:
-                logger.info("Starting Paperless archive reindex …")
+            if _INDEX_PAPERLESS:
+                logger.info("Starting Paperless API reindex …")
                 indexer.full_reindex(
-                    base_path=PAPERLESS_ARCHIVE_PATH,
                     source="paperless",
                     on_progress=lambda p, t: _on_progress(p, t, "paperless"),
                 )
@@ -139,11 +206,16 @@ def main():
 
     threading.Thread(target=_run_reindex, daemon=True).start()
 
+    # Register Paperless webhook for real-time updates
+    if _INDEX_PAPERLESS:
+        threading.Thread(target=_register_paperless_webhook, daemon=True).start()
+
+    # Only start filesystem watcher for Obsidian (Paperless uses webhooks now)
     logger.info("Starting file watcher …")
     observer = start_watcher(
         indexer,
         watch_obsidian=_INDEX_OBSIDIAN,
-        watch_paperless=index_paperless,
+        watch_paperless=False,
     )
 
     logger.info("Starting API server on port %d …", API_PORT)

@@ -1,5 +1,6 @@
 """FastAPI REST API for the RAG API."""
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Security, status
@@ -13,10 +14,11 @@ from .config import (
     API_BEARER_TOKEN,
     AUTH_REQUIRED,
     PUBLIC_URL,
-    PAPERLESS_ARCHIVE_PATH,
     PAPERLESS_PUBLIC_URL,
     DATA_SOURCES,
 )
+
+logger = logging.getLogger(__name__)
 
 # SKILL.md is copied into /app/ by the Dockerfile; fall back to repo root for local dev
 _SKILL_PATH = next(
@@ -257,7 +259,36 @@ def reindex(_: None = Security(require_auth)):
     count = 0
     if DATA_SOURCES in ("obsidian", "all"):
         count += indexer.full_reindex()
-    if DATA_SOURCES in ("paperless", "all") and PAPERLESS_ARCHIVE_PATH:
-        count += indexer.full_reindex(base_path=PAPERLESS_ARCHIVE_PATH, source="paperless")
+    if DATA_SOURCES in ("paperless", "all"):
+        count += indexer.full_reindex(source="paperless")
     indexing_status = {"indexing": False, "indexed_files": len(indexer._file_hashes), "total_files": len(indexer._file_hashes)}
     return ReindexResponse(updated_files=count, message=f"Reindexed {count} files")
+
+
+# ── Paperless webhook ────────────────────────────────────────────────────
+
+
+class PaperlessWebhookPayload(BaseModel):
+    document_id: int
+    action: str = ""  # "added", "updated", "deleted"
+
+
+@app.post("/webhook/paperless", summary="Paperless document webhook", include_in_schema=False)
+def paperless_webhook(payload: PaperlessWebhookPayload):
+    """Receives notifications from Paperless when documents change.
+
+    The webhook is auto-registered at startup so no manual configuration
+    is needed.  Accepts ``{"document_id": 123, "action": "added"}`` etc.
+    """
+    doc_id = payload.document_id
+    action = payload.action.lower()
+
+    if action == "deleted":
+        indexer.remove_paperless_doc(doc_id)
+        logger.info("Webhook: removed paperless doc %d", doc_id)
+        return {"status": "removed", "document_id": doc_id}
+
+    # added / updated / unknown → (re-)index
+    updated = indexer.reindex_paperless_doc(doc_id)
+    logger.info("Webhook: %s paperless doc %d (updated=%s)", action or "reindex", doc_id, updated)
+    return {"status": "indexed" if updated else "unchanged", "document_id": doc_id}
