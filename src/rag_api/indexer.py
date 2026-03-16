@@ -342,9 +342,11 @@ def _paperless_api_data(file_path: str) -> dict:
 def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
     """Fetch a single Paperless document, looking up by ID or archive filename.
 
-    The comparison uses the full ``archive_filename`` (including any
-    subdirectory component) so that files in different directories with
-    the same basename are not confused.
+    Uses a two-pass strategy: first tries an exact full-path match against
+    ``archive_filename``, then falls back to basename-only if no full-path
+    match was found (for flat archive layouts without subdirectories).
+    Paginates through all API results to guarantee the correct document
+    is found even when many files share the same basename.
     """
     import requests
 
@@ -359,20 +361,35 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
         if resp.ok:
             return resp.json()
 
-    # Slow path: search by archive filename and verify full path match
+    # Slow path: search by archive filename with pagination
     filename = Path(file_path).name
-    resp = requests.get(
-        f"{base_url}/api/documents/",
-        params={"query": f"archive_filename:{filename}", "page_size": 5},
-        headers=headers,
-        timeout=10,
-    )
-    if resp.ok:
-        for doc in resp.json().get("results", []):
-            archive_fn = doc.get("archive_filename", "")
-            # Compare full relative path first (handles subdirectories),
-            # fall back to basename-only for flat archive layouts.
-            if archive_fn == file_path or Path(archive_fn).name == filename:
-                return doc
+    basename_match: dict | None = None
+    page = 1
+    _MAX_PAGES = 10  # safety limit
 
-    return None
+    while page <= _MAX_PAGES:
+        resp = requests.get(
+            f"{base_url}/api/documents/",
+            params={"query": f"archive_filename:{filename}", "page": page, "page_size": 25},
+            headers=headers,
+            timeout=10,
+        )
+        if not resp.ok:
+            break
+
+        data = resp.json()
+        for doc in data.get("results", []):
+            archive_fn = doc.get("archive_filename", "")
+            # Exact full-path match — always preferred
+            if archive_fn == file_path:
+                return doc
+            # Track first basename match as fallback
+            if basename_match is None and Path(archive_fn).name == filename:
+                basename_match = doc
+
+        if not data.get("next"):
+            break
+        page += 1
+
+    # No exact path match found; use basename fallback for flat archives
+    return basename_match
