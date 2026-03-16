@@ -358,13 +358,13 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
     filename = Path(file_path).name
     resp = requests.get(
         f"{base_url}/api/documents/",
-        params={"query": f"archive_filename:{filename}", "page_size": 1},
+        params={"query": f"archive_filename:{filename}", "page_size": 5},
         headers=headers,
         timeout=10,
     )
     if resp.ok:
-        results = resp.json().get("results", [])
-        if results:
-            return results[0]
+        for doc in resp.json().get("results", []):
+            if Path(doc.get("archive_filename", "")).name == filename:
+                return doc
 
     return None
