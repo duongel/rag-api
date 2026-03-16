@@ -361,13 +361,12 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
         if resp.ok:
             return resp.json()
 
-    # Slow path: search by archive filename with pagination
+    # Slow path: search by archive filename, paginate until exhausted
     filename = Path(file_path).name
     basename_match: dict | None = None
     page = 1
-    _MAX_PAGES = 10  # safety limit
 
-    while page <= _MAX_PAGES:
+    while True:
         resp = requests.get(
             f"{base_url}/api/documents/",
             params={"query": f"archive_filename:{filename}", "page": page, "page_size": 25},
