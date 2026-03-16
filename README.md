@@ -103,12 +103,15 @@ graph LR
 
 ## Access Modes
 
-| Mode | Host port | Auth | Config |
-|---|:---:|:---:|---|
-| Internal, no auth | — | — | `ACCESS_MODE=internal` `AUTH_REQUIRED=false` |
-| Internal + token | — | yes | `ACCESS_MODE=internal` `AUTH_REQUIRED=true` |
-| Host + token | `8484` | yes | `ACCESS_MODE=host` `AUTH_REQUIRED=true` |
-| Host, no auth | `8484` | — | `ACCESS_MODE=host` `AUTH_REQUIRED=false` |
+| Mode | Use case | Reachable from | Port | Auth |
+|---|---|---|:---:|:---:|
+| **Internal** | Other containers on the same Docker network (e.g. n8n) | `http://rag-api:8080` | — | optional |
+| **Host** | Browser, scripts, or apps on the host machine | `http://localhost:8484` | `8484` | recommended |
+
+> [!NOTE]
+> **Internal** = no port published on the host; only containers in the same Docker network can reach the API.
+> **Host** = port `8484` is published; anything on the machine (or network) can reach it.
+> Auth adds a bearer token to all data-bearing endpoints. Enabled by default in host mode.
 
 ## n8n Integration
 
