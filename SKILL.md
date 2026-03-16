@@ -57,6 +57,7 @@ For most agents, these three operations are sufficient:
 ### OpenAI-compatible Tool Definition
 
 This format is suitable for agents that use JSON tool definitions or function calling.
+Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI**, **Fireworks AI**, **Perplexity**, **DeepSeek**, and most OpenAI-compatible providers.
 
 ```json
 [
@@ -160,6 +161,86 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
         "path": { "type": "string" }
       },
       "required": ["path"]
+    }
+  }
+]
+```
+
+### Gemini-compatible Tool Definition
+
+This format is for Google Gemini setups using `function_declarations`.
+
+```json
+[
+  {
+    "name": "search_notes",
+    "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Natural-language search query." },
+        "top_k": { "type": "integer", "description": "Maximum number of results." },
+        "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags." },
+        "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "keyword_search_notes",
+    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Exact search string." },
+        "top_k": { "type": "integer", "description": "Maximum number of results." }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "get_note",
+    "description": "Fetch the full Markdown content of one note by relative path.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Relative note path, e.g. Projects/Home/Heating.md" }
+      },
+      "required": ["path"]
+    }
+  }
+]
+```
+
+### Cohere-compatible Tool Definition
+
+This format is for Cohere Command R/R+ setups using `parameter_definitions`.
+
+```json
+[
+  {
+    "name": "search_notes",
+    "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+    "parameter_definitions": {
+      "query": { "type": "str", "description": "Natural-language search query.", "required": true },
+      "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
+      "expand_links": { "type": "bool", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "required": false },
+      "min_score": { "type": "float", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions.", "required": false }
+    }
+  },
+  {
+    "name": "keyword_search_notes",
+    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+    "parameter_definitions": {
+      "query": { "type": "str", "description": "Exact search string.", "required": true },
+      "top_k": { "type": "int", "description": "Maximum number of results.", "required": false }
+    }
+  },
+  {
+    "name": "get_note",
+    "description": "Fetch the full Markdown content of one note by relative path.",
+    "parameter_definitions": {
+      "path": { "type": "str", "description": "Relative note path, e.g. Projects/Home/Heating.md", "required": true }
     }
   }
 ]
