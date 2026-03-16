@@ -98,6 +98,10 @@ _validate_config() {
     [[ -n "${VAULT_PATH:-}" ]] || die "VAULT_PATH is required when DATA_SOURCES=${DATA_SOURCES:-all}."
     [[ -d "${VAULT_PATH}" ]]   || die "VAULT_PATH does not exist: ${VAULT_PATH}"
   fi
+  if [[ "${DATA_SOURCES:-all}" != "obsidian" ]]; then
+    [[ -n "${PAPERLESS_URL:-}" ]]   || die "PAPERLESS_URL is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+    [[ -n "${PAPERLESS_TOKEN:-}" ]] || die "PAPERLESS_TOKEN is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+  fi
 }
 
 _api_get() {
@@ -137,43 +141,53 @@ _prompt_vault_path() {
   done
 }
 
-_prompt_paperless_path() {
-  # Sets PAPERLESS_ARCHIVE_PATH; empty string means the user chose to skip.
-  while true; do
-    printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
-    read -r PAPERLESS_ARCHIVE_PATH
-    PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
-    if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
-      if [[ "$DATA_SOURCES" == "paperless" ]]; then
-        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – no Paperless documents will be indexed.${NC}\n"
-      else
-        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
-      fi
-      return 0
-    fi
-    if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
-      PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
-      echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
-      return 0
-    fi
-    echo -e "${RED}❌ Directory not found: $PAPERLESS_ARCHIVE_PATH${NC}"
-  done
-}
-
 _prompt_paperless_api() {
-  # Sets PAPERLESS_URL, PAPERLESS_TOKEN, PAPERLESS_PUBLIC_URL (all may remain empty).
-  echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
-  read -r PAPERLESS_URL
-  if [[ -n "$PAPERLESS_URL" ]]; then
+  # Sets PAPERLESS_URL and PAPERLESS_TOKEN (required for Paperless indexing).
+  # Also sets PAPERLESS_PUBLIC_URL (optional, for direct links in search results).
+  while true; do
+    echo -n "🌐 Paperless URL (e.g. http://paperless:8000): "
+    read -r PAPERLESS_URL
+    if [[ -z "$PAPERLESS_URL" ]]; then
+      echo -e "${RED}❌ Paperless URL is required for Paperless indexing.${NC}"
+      continue
+    fi
+    break
+  done
+  while true; do
     echo -n "🔑 Paperless API token: "
     read -rs PAPERLESS_TOKEN; echo ""
-    echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
-    echo -e "      can open the source document in your Paperless UI."
-    echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
-    echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
-    read -r PAPERLESS_PUBLIC_URL
-    echo -e "   ${GREEN}✓${NC} Paperless: $PAPERLESS_URL\n"
+    if [[ -z "$PAPERLESS_TOKEN" ]]; then
+      echo -e "${RED}❌ Paperless API token is required.${NC}"
+      continue
+    fi
+    break
+  done
+  echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
+  echo -e "      can open the source document in your Paperless UI."
+  echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
+  echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
+  read -r PAPERLESS_PUBLIC_URL
+  echo -e "   ${GREEN}✓${NC} Paperless API: $PAPERLESS_URL\n"
+}
+
+_prompt_paperless_archive_path() {
+  # Sets PAPERLESS_ARCHIVE_PATH; empty string means the user chose to skip (recommended).
+  echo -e "   ${BLUE}ℹ️  Legacy option${NC}: Mount the Paperless archive/ directory for direct PDF access."
+  echo -e "      This is ${YELLOW}not required${NC} – indexing works fully via the Paperless API."
+  printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip – recommended)${NC}: "
+  read -r PAPERLESS_ARCHIVE_PATH
+  PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
+  if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+    echo -e "   ${GREEN}✓${NC} API-only mode (no archive mount)\n"
+    return 0
   fi
+  if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
+    PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
+    echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
+    return 0
+  fi
+  echo -e "${YELLOW}⚠️  Directory not found: $PAPERLESS_ARCHIVE_PATH – skipping archive mount.${NC}\n"
+  PAPERLESS_ARCHIVE_PATH=""
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────
@@ -208,8 +222,8 @@ _run_setup() {
 
   # 2. Paperless config – only when indexing Paperless
   if [[ "$DATA_SOURCES" != "obsidian" ]]; then
-    _prompt_paperless_path
-    [[ -n "$PAPERLESS_ARCHIVE_PATH" ]] && _prompt_paperless_api
+    _prompt_paperless_api
+    _prompt_paperless_archive_path
   fi
 
   # 3. Ollama – local or external?
@@ -310,10 +324,10 @@ EOF
 
 if [[ -f .env ]]; then
   EXISTING_VAULT=$(grep -E '^VAULT_PATH=' .env | cut -d= -f2-)
-  EXISTING_PAPERLESS=$(grep -E '^PAPERLESS_ARCHIVE_PATH=' .env | cut -d= -f2-)
+  EXISTING_PAPERLESS_URL=$(grep -E '^PAPERLESS_URL=' .env | cut -d= -f2-)
   _env_valid=false
-  [[ -n "$EXISTING_VAULT"     && -d "$EXISTING_VAULT"     ]] && _env_valid=true
-  [[ -n "$EXISTING_PAPERLESS" && -d "$EXISTING_PAPERLESS" ]] && _env_valid=true
+  [[ -n "$EXISTING_VAULT"         && -d "$EXISTING_VAULT"         ]] && _env_valid=true
+  [[ -n "$EXISTING_PAPERLESS_URL"                                  ]] && _env_valid=true
 
   if [[ "$_env_valid" == true ]]; then
     echo -e "${BOLD}📄 Existing .env found:${NC}"
@@ -370,23 +384,18 @@ if [[ -f .env ]]; then
         _update_env VAULT_PATH "$VAULT_PATH"
       fi
 
-      # Paperless archive path needed but missing
-      if [[ "$DATA_SOURCES" != "obsidian" && (-z "${PAPERLESS_ARCHIVE_PATH:-}" || ! -d "${PAPERLESS_ARCHIVE_PATH:-}") ]]; then
-        echo -e "${YELLOW}⚠️  PAPERLESS_ARCHIVE_PATH is missing or invalid. Please provide it now.${NC}"
-        _prompt_paperless_path
-        if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+      # Paperless API config needed but missing
+      if [[ "$DATA_SOURCES" != "obsidian" && -z "${PAPERLESS_URL:-}" ]]; then
+        echo -e "${YELLOW}⚠️  PAPERLESS_URL is missing. Please provide it now.${NC}"
+        _prompt_paperless_api
+        if [[ -z "$PAPERLESS_URL" ]]; then
           DATA_SOURCES="obsidian"
           _update_env DATA_SOURCES "obsidian"
         else
-          _update_env PAPERLESS_ARCHIVE_PATH "$PAPERLESS_ARCHIVE_PATH"
-          # Also prompt for API URL + token if not yet configured
-          if [[ -z "${PAPERLESS_URL:-}" ]]; then
-            _prompt_paperless_api
-            _update_env \
-              PAPERLESS_URL          "$PAPERLESS_URL" \
-              PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
-              PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
-          fi
+          _update_env \
+            PAPERLESS_URL          "$PAPERLESS_URL" \
+            PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
+            PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
         fi
       fi
 
@@ -471,7 +480,7 @@ while true; do
     break
   fi
 
-  if [[ "${DATA_SOURCES:-all}" == "all" && -n "${PAPERLESS_ARCHIVE_PATH:-}" ]]; then
+  if [[ "${DATA_SOURCES:-all}" == "all" && -n "${PAPERLESS_URL:-}" ]]; then
     OBS_IDX=$(_json_int "$STATUS" "obsidian_indexed")
     OBS_TOT=$(_json_int "$STATUS" "obsidian_total")
     PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")
