@@ -6,7 +6,7 @@ from pathlib import Path
 
 import chromadb
 
-from .config import VAULT_PATH, CHROMA_PATH, PAPERLESS_ARCHIVE_PATH
+from .config import VAULT_PATH, CHROMA_PATH
 from .graph import LinkGraph
 from .parser import parse_markdown, parse_pdf, parse_plaintext, extract_wikilinks, extract_tags
 
@@ -67,8 +67,6 @@ class Indexer:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _base_path_for_source(self, source: str) -> str:
-        if source == "paperless":
-            return PAPERLESS_ARCHIVE_PATH
         return VAULT_PATH
 
     # ------------------------------------------------------------------
