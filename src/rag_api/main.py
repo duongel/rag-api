@@ -93,6 +93,8 @@ def _register_paperless_webhook():
 
             data = resp.json()
             for wf in data.get("results", []):
+                if not wf.get("enabled", True):
+                    continue
                 for action in wf.get("actions", []):
                     if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
                         # Ensure headers (e.g. auth token) are up to date
