@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/duongel/rag-api/compare/v1.5.0...v1.6.0) (2026-03-16)
+
+
+### Features
+
+* add POST /note endpoint for n8n compatibility ([4de0676](https://github.com/duongel/rag-api/commit/4de0676ca5cfd194853fa22112b3c3bccca1243f))
+
 # [1.5.0](https://github.com/duongel/rag-api/compare/v1.4.3...v1.5.0) (2026-03-16)
 
 
