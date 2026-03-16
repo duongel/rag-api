@@ -19,6 +19,31 @@ cd "$SCRIPT_DIR"
 
 die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 
+_needs_obsidian()  { [[ "${DATA_SOURCES:-all}" != "paperless" ]]; }
+_needs_paperless() { [[ "${DATA_SOURCES:-all}" != "obsidian"  ]]; }
+
+_prompt_required() {
+  local prompt=$1 secret=${2:-false}
+  while true; do
+    echo -n "$prompt"
+    if [[ "$secret" == true ]]; then read -rs REPLY; echo ""
+    else read -r REPLY; fi
+    [[ -n "$REPLY" ]] && { printf '%s' "$REPLY"; return 0; }
+    echo -e "${RED}❌ This field is required.${NC}"
+  done
+}
+
+_show_token() {
+  local token=$1
+  if [[ -n "$token" ]]; then
+    echo -e "${BOLD}🔐 API bearer token${NC}"
+    echo -e "   $token"
+    echo -e "   Save this token. Clients must send: ${BOLD}Authorization: Bearer <token>${NC}\n"
+  else
+    echo -e "${YELLOW}🔓 Authentication disabled.${NC}\n"
+  fi
+}
+
 # _update_env KEY VALUE [KEY VALUE …]  –  atomically update key=value pairs in .env
 _sed_escape_replacement() {
   # Escape characters that are special in sed replacement strings.
@@ -85,17 +110,17 @@ _json_int() {
 
 _compose() {
   local files=(-f docker-compose.yml)
-  [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
+  _needs_obsidian && files+=(-f docker-compose.obsidian.yml)
   [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
   docker compose "${files[@]}" "$@"
 }
 
 _validate_config() {
-  if [[ "${DATA_SOURCES:-all}" != "paperless" ]]; then
+  if _needs_obsidian; then
     [[ -n "${VAULT_PATH:-}" ]] || die "VAULT_PATH is required when DATA_SOURCES=${DATA_SOURCES:-all}."
     [[ -d "${VAULT_PATH}" ]]   || die "VAULT_PATH does not exist: ${VAULT_PATH}"
   fi
-  if [[ "${DATA_SOURCES:-all}" != "obsidian" ]]; then
+  if _needs_paperless; then
     [[ -n "${PAPERLESS_URL:-}" ]]   || die "PAPERLESS_URL is required when DATA_SOURCES=${DATA_SOURCES:-all}."
     [[ -n "${PAPERLESS_TOKEN:-}" ]] || die "PAPERLESS_TOKEN is required when DATA_SOURCES=${DATA_SOURCES:-all}."
   fi
@@ -139,26 +164,8 @@ _prompt_vault_path() {
 }
 
 _prompt_paperless_api() {
-  # Sets PAPERLESS_URL and PAPERLESS_TOKEN (required for Paperless indexing).
-  # Also sets PAPERLESS_PUBLIC_URL (optional, for direct links in search results).
-  while true; do
-    echo -n "🌐 Paperless URL (e.g. http://paperless:8000): "
-    read -r PAPERLESS_URL
-    if [[ -z "$PAPERLESS_URL" ]]; then
-      echo -e "${RED}❌ Paperless URL is required for Paperless indexing.${NC}"
-      continue
-    fi
-    break
-  done
-  while true; do
-    echo -n "🔑 Paperless API token: "
-    read -rs PAPERLESS_TOKEN; echo ""
-    if [[ -z "$PAPERLESS_TOKEN" ]]; then
-      echo -e "${RED}❌ Paperless API token is required.${NC}"
-      continue
-    fi
-    break
-  done
+  PAPERLESS_URL=$(_prompt_required "🌐 Paperless URL (e.g. http://paperless:8000): ")
+  PAPERLESS_TOKEN=$(_prompt_required "🔑 Paperless API token: " true)
   echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
   echo -e "      can open the source document in your Paperless UI."
   echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
@@ -191,14 +198,14 @@ _run_setup() {
   PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL=""
 
   # 1. Vault path – only when indexing Obsidian
-  if [[ "$DATA_SOURCES" != "paperless" ]]; then
+  if _needs_obsidian; then
     _prompt_vault_path
   else
     VAULT_PATH=""
   fi
 
   # 2. Paperless config – only when indexing Paperless
-  if [[ "$DATA_SOURCES" != "obsidian" ]]; then
+  if _needs_paperless; then
     _prompt_paperless_api
   fi
 
@@ -236,7 +243,6 @@ _run_setup() {
     read -r REQUIRE_AUTH
     if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
       AUTH_REQUIRED="true"
-      generated_token="$(openssl rand -hex 32)"
       echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
     else
       AUTH_REQUIRED="false"
@@ -253,10 +259,11 @@ _run_setup() {
       echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
     else
       AUTH_REQUIRED="true"
-      generated_token="$(openssl rand -hex 32)"
       echo -e "   ${GREEN}✓${NC} Host access enabled at http://${HOST_BIND_ADDRESS}:${HOST_PORT}\n"
     fi
   fi
+
+  [[ "$AUTH_REQUIRED" == "true" ]] && generated_token="$(openssl rand -hex 32)"
 
   # 5. Docker network (optional)
   echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
@@ -286,13 +293,7 @@ PAPERLESS_TOKEN=$PAPERLESS_TOKEN
 PAPERLESS_PUBLIC_URL=$PAPERLESS_PUBLIC_URL
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
-  if [[ "$AUTH_REQUIRED" == "true" ]]; then
-    echo -e "${BOLD}🔐 API bearer token${NC}"
-    echo -e "   $generated_token"
-    echo -e "   Save this token. Clients must send: ${BOLD}Authorization: Bearer <token>${NC}\n"
-  else
-    echo -e "${YELLOW}🔓 Authentication disabled.${NC}\n"
-  fi
+  _show_token "$generated_token"
 }
 
 # ── Check for existing .env with a valid vault path ───────────────────────
@@ -352,14 +353,14 @@ if [[ -f .env ]]; then
       # run uses no flag (→ all), so Paperless was never configured.
 
       # Vault path needed but missing
-      if [[ "$DATA_SOURCES" != "paperless" && (-z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}") ]]; then
+      if _needs_obsidian && [[ -z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}" ]]; then
         echo -e "${YELLOW}⚠️  VAULT_PATH is missing or invalid. Please provide it now.${NC}"
         _prompt_vault_path
         _update_env VAULT_PATH "$VAULT_PATH"
       fi
 
       # Paperless API config needed but missing
-      if [[ "$DATA_SOURCES" != "obsidian" && ( -z "${PAPERLESS_URL:-}" || -z "${PAPERLESS_TOKEN:-}" ) ]]; then
+      if _needs_paperless && [[ -z "${PAPERLESS_URL:-}" || -z "${PAPERLESS_TOKEN:-}" ]]; then
         echo -e "${YELLOW}\u26a0\ufe0f  Paperless API config is incomplete. Please provide it now.${NC}"
         _prompt_paperless_api
         if [[ -z "$PAPERLESS_URL" ]]; then
