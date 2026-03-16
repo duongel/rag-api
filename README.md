@@ -15,7 +15,7 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 │   (Python/FastAPI) │     │   (nomic-embed-text) │
 │   + ChromaDB       │     │   GPU (optional)     │
 │   + File Watcher   │     └──────────────────────┘
-│                    │◄── /vault (read-only mount)
+│                    │◄── /obsidian (read-only mount)
 └────────────────────┘
         │
    rag-network (or any external Docker network)
@@ -42,17 +42,7 @@ All data-bearing endpoints require a bearer token by default.
 curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
 ```
 
-Clones the repo to `~/rag-api` and runs the interactive setup. Safe to re-run — updates an existing installation.
-
-### Manual (advanced / development)
-
-### One-liner (recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
-```
-
-This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step – the pre-built image is pulled from GHCR automatically.
+This downloads the Compose files and `start.sh` into a new `rag-api/` directory and immediately starts the interactive setup wizard. No `git`, no build step – the pre-built image is pulled from GHCR automatically. Safe to re-run – an existing installation is detected and updated in place.
 
 ### Manual (advanced / development)
 
@@ -94,10 +84,10 @@ Available tags: `latest`, `1.0.0`, `1.0`, …
 ## Updates
 
 ```bash
-# Re-run the installer – pulls latest code and restarts
+# Re-run the installer – fetches latest files and restarts
 curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
 
-# Or manually
+# Or manually (git clone installs)
 cd ~/rag-api && git pull && ./start.sh
 ```
 
