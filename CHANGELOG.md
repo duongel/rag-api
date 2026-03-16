@@ -1,3 +1,17 @@
+## [1.6.1](https://github.com/duongel/rag-api/compare/v1.6.0...v1.6.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* compare full archive_filename path to avoid subdirectory collisions ([a564143](https://github.com/duongel/rag-api/commit/a564143596974d41e87b1ce91e94fced41fdcf02))
+* only use basename fallback when unambiguous (single match) ([d909ac1](https://github.com/duongel/rag-api/commit/d909ac147fc47c3095d3f572f6fc4c1b0da766e1))
+* paginate Paperless lookup and restrict basename fallback ([092cd0e](https://github.com/duongel/rag-api/commit/092cd0e00b81dfc585b7dbb84f97dddc87305404))
+* pass paperless_doc_id through search results ([ec21bf9](https://github.com/duongel/rag-api/commit/ec21bf9ad6c636b9e6391c08181193933ea2ab9a))
+* remove _MAX_PAGES cap, paginate until no next page ([8fddfd2](https://github.com/duongel/rag-api/commit/8fddfd2350e38135b6350ede6ba917d0ab3f7ee0))
+* resolve Paperless doc ID for non-numeric filenames ([2e45aab](https://github.com/duongel/rag-api/commit/2e45aab6f0e083baf09067f7ea01e146df676a63))
+* use paperless_doc_id from metadata in _enrich_source_url ([04733da](https://github.com/duongel/rag-api/commit/04733daee3ec3982a951b310c4fcf165884e7679))
+* verify exact archive_filename match in Paperless lookup ([12a73d9](https://github.com/duongel/rag-api/commit/12a73d9754c351b71ff8963842c4311a33d2f121))
+
 # [1.6.0](https://github.com/duongel/rag-api/compare/v1.5.0...v1.6.0) (2026-03-16)
 
 
