@@ -95,7 +95,6 @@ def _register_paperless_webhook():
             for wf in data.get("results", []):
                 for action in wf.get("actions", []):
                     if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
-                        found_existing = True
                         # Ensure headers (e.g. auth token) are up to date
                         existing_headers = action.get("webhook", {}).get("headers", {})
                         if existing_headers != webhook_headers:
@@ -109,10 +108,12 @@ def _register_paperless_webhook():
                             )
                             if update_resp.ok:
                                 logger.info("Webhook headers updated successfully")
+                                found_existing = True
                             else:
-                                logger.warning("Failed to update webhook headers (HTTP %d)", update_resp.status_code)
+                                logger.warning("Failed to update webhook headers (HTTP %d) — will re-create workflow", update_resp.status_code)
                         else:
                             logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
+                            found_existing = True
             url = data.get("next")
 
         if found_existing:

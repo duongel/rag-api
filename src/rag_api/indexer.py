@@ -413,12 +413,11 @@ class Indexer:
                 timeout=10,
             )
             if not resp.ok:
-                logger.warning("Paperless doc %d not found (HTTP %d)", doc_id, resp.status_code)
-                return False
+                raise RuntimeError(f"Paperless doc {doc_id} not found (HTTP {resp.status_code})")
             return self.index_paperless_doc(resp.json())
-        except Exception as e:
-            logger.error("Failed to fetch paperless doc %d: %s", doc_id, e)
-            return False
+        except Exception:
+            logger.exception("Failed to fetch/index paperless doc %d", doc_id)
+            raise
 
     def remove_paperless_doc(self, doc_id: int):
         """Remove a Paperless document from the index by its ID."""
