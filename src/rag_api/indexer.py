@@ -344,7 +344,7 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
 
     Uses a two-pass strategy: first tries an exact full-path match against
     ``archive_filename``, then falls back to basename-only if no full-path
-    match was found (for flat archive layouts without subdirectories).
+    match was found *and* the basename is unambiguous (exactly one hit).
     Paginates through all API results to guarantee the correct document
     is found even when many files share the same basename.
     """
@@ -363,7 +363,7 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
 
     # Slow path: search by archive filename, paginate until exhausted
     filename = Path(file_path).name
-    basename_match: dict | None = None
+    basename_matches: list[dict] = []
     page = 1
 
     while True:
@@ -382,13 +382,15 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
             # Exact full-path match — always preferred
             if archive_fn == file_path:
                 return doc
-            # Track first basename match as fallback
-            if basename_match is None and Path(archive_fn).name == filename:
-                basename_match = doc
+            # Collect all basename matches to check uniqueness later
+            if Path(archive_fn).name == filename:
+                basename_matches.append(doc)
 
         if not data.get("next"):
             break
         page += 1
 
-    # No exact path match found; use basename fallback for flat archives
-    return basename_match
+    # Only use basename fallback when exactly one document matched (unambiguous)
+    if len(basename_matches) == 1:
+        return basename_matches[0]
+    return None
