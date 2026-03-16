@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/duongel/rag-api/compare/v1.4.1...v1.4.2) (2026-03-16)
+
+
+### Bug Fixes
+
+* allow install into existing directory with pre-placed .env ([1d376f1](https://github.com/duongel/rag-api/commit/1d376f121c6ae3ec536b03eae88dd858e7d8d70f))
+
 ## [1.4.1](https://github.com/duongel/rag-api/compare/v1.4.0...v1.4.1) (2026-03-16)
 
 
