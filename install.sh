@@ -12,12 +12,15 @@ command -v curl   >/dev/null 2>&1 || { echo -e "${RED}❌ curl is required but n
 command -v docker >/dev/null 2>&1 || { echo -e "${RED}❌ Docker not found.${NC}" >&2; exit 1; }
 docker info       >/dev/null 2>&1 || { echo -e "${RED}❌ Docker is not running.${NC}" >&2; exit 1; }
 
-# Re-attach stdin to the terminal so interactive prompts work when piped through bash.
-# Without a controlling TTY (for example `ssh host 'curl ... | bash'`), `exec < /dev/tty`
-# aborts silently because `set -e` exits on the failed redirection.
+# When piped through bash (`curl … | bash`), stdin is the pipe.
+# We must NOT `exec < /dev/tty` here because that would steal bash's
+# script-reading source and cause the remainder of the script to hang.
+# Instead we set a flag and redirect stdin only in the final `exec` call
+# so start.sh (read from a file on disk) gets an interactive terminal.
+_NEED_TTY_REDIRECT=false
 if [[ ! -t 0 ]]; then
   if [[ -r /dev/tty ]]; then
-    exec < /dev/tty
+    _NEED_TTY_REDIRECT=true
   else
     echo -e "${RED}❌ Interactive terminal required for setup, but no TTY is attached.${NC}" >&2
     echo -e "${YELLOW}   Run this inside an interactive SSH session, then execute:${NC}" >&2
@@ -53,4 +56,8 @@ done
 chmod +x "$INSTALL_DIR/start.sh"
 echo -e "${GREEN}✅ Files ready.${NC}"
 echo ""
-exec "$INSTALL_DIR/start.sh" "$@"
+if [[ "$_NEED_TTY_REDIRECT" == true ]]; then
+  exec "$INSTALL_DIR/start.sh" "$@" < /dev/tty
+else
+  exec "$INSTALL_DIR/start.sh" "$@"
+fi
