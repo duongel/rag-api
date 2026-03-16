@@ -6,7 +6,7 @@ from pathlib import Path
 
 import chromadb
 
-from .config import VAULT_PATH, CHROMA_PATH, PAPERLESS_ARCHIVE_PATH
+from .config import VAULT_PATH, CHROMA_PATH
 from .graph import LinkGraph
 from .parser import parse_markdown, parse_pdf, parse_plaintext, extract_wikilinks, extract_tags
 
@@ -29,6 +29,8 @@ class Indexer:
         self._file_sources: dict[str, str] = {}
         # Tracks API content hashes separately for Paperless documents
         self._api_content_hashes: dict[str, str] = {}
+        # Maps paperless doc_id (str) → currently indexed file_path for O(1) rename detection
+        self._paperless_doc_paths: dict[str, str] = {}
         self.link_graph = LinkGraph()
         self._load_file_hashes()
 
@@ -59,6 +61,9 @@ class Indexer:
                     ach = meta.get("api_content_hash")
                     if ach:
                         self._api_content_hashes[doc_key] = ach
+                    pdid = meta.get("paperless_doc_id")
+                    if pdid and source == "paperless":
+                        self._paperless_doc_paths[pdid] = fp
         except Exception:
             pass
 
@@ -67,8 +72,6 @@ class Indexer:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _base_path_for_source(self, source: str) -> str:
-        if source == "paperless":
-            return PAPERLESS_ARCHIVE_PATH
         return VAULT_PATH
 
     # ------------------------------------------------------------------
@@ -95,30 +98,8 @@ class Indexer:
         doc_key = self._doc_key(source, file_path)
         file_hash = self._file_content_hash(full_path)
 
-        # For Paperless documents, fetch API data early so OCR content changes
-        # are detected.  The raw PDF hash and the API content hash are tracked
-        # independently so that a temporary API outage does NOT invalidate
-        # an already-indexed document.
-        api_data: dict = {}
-        api_content_hash = ""
-        if source == "paperless":
-            api_data = _paperless_api_data(file_path)
-            api_content = api_data.get("content", "")
-            if api_content:
-                api_content_hash = hashlib.sha256(api_content.encode()).hexdigest()
-
-            stored_file_hash = self._file_hashes.get(doc_key)
-            if stored_file_hash == file_hash:
-                # PDF bytes unchanged
-                if not api_content:
-                    # API unavailable — can't detect content edits, keep existing index
-                    return False
-                if self._api_content_hashes.get(doc_key) == api_content_hash:
-                    # API content also unchanged
-                    return False
-        else:
-            if self._file_hashes.get(doc_key) == file_hash:
-                return False  # nothing changed
+        if self._file_hashes.get(doc_key) == file_hash:
+            return False  # nothing changed
 
         self.remove_file(file_path, source=source)
 
@@ -133,14 +114,7 @@ class Indexer:
                 pass
             chunks = parse_markdown(file_path, resolved_base)
         else:  # .pdf
-            chunks = None
-            if source == "paperless" and api_data:
-                extra_meta = api_data.get("meta", {})
-                content = api_data.get("content")
-                if content:
-                    chunks = parse_plaintext(file_path, content)
-            if not chunks:
-                chunks = parse_pdf(file_path, resolved_base)
+            chunks = parse_pdf(file_path, resolved_base)
 
         if not chunks:
             return False
@@ -158,7 +132,6 @@ class Indexer:
                 "file_hash": file_hash,
                 "chunk_index": i,
                 "source": source,
-                **({"api_content_hash": api_content_hash} if api_content_hash else {}),
                 **extra_meta,
             }
             for i, c in enumerate(chunks)
@@ -173,11 +146,90 @@ class Indexer:
 
         self._file_hashes[doc_key] = file_hash
         self._file_sources[doc_key] = source
-        if api_content_hash:
-            self._api_content_hashes[doc_key] = api_content_hash
-        else:
-            self._api_content_hashes.pop(doc_key, None)
         logger.info("Indexed %s [%s] (%d chunks)", file_path, source, len(chunks))
+        return True
+
+    def index_paperless_doc(self, doc: dict) -> bool:
+        """Index a single Paperless document from its API data.
+
+        *doc* is a full document dict from the Paperless ``/api/documents/`` endpoint.
+        Returns True if the document was (re-)indexed, False if unchanged.
+        """
+        doc_id = doc.get("id")
+        if doc_id is None:
+            return False
+
+        content = (doc.get("content") or "").strip()
+        if not content:
+            # Only remove if the payload actually included a content field;
+            # list responses may omit content entirely.
+            if "content" in doc:
+                self._remove_all_paths_for_paperless_doc(doc_id)
+            return False
+
+        # Use archive_filename as file_path when available, otherwise synthesize
+        file_path = doc.get("archive_filename") or f"paperless/{doc_id}.pdf"
+        doc_key = self._doc_key("paperless", file_path)
+
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+        # O(1) rename detection: check if this doc_id was previously indexed under a different path
+        prev_path = self._paperless_doc_paths.get(str(doc_id))
+        path_changed = prev_path is not None and prev_path != file_path
+
+        if not path_changed and self._api_content_hashes.get(doc_key) == content_hash:
+            return False  # unchanged
+
+        # Remove all existing entries for this doc ID (handles renamed archive files)
+        self._remove_all_paths_for_paperless_doc(doc_id)
+        self.remove_file(file_path, source="paperless")
+
+        meta: dict = {"paperless_doc_id": str(doc_id)}
+        if doc.get("title"):
+            meta["title"] = doc["title"]
+        if doc.get("correspondent"):
+            meta["correspondent"] = str(doc["correspondent"])
+        tags = doc.get("tags", [])
+        if tags:
+            meta["tags"] = ",".join(str(t) for t in tags)
+        if doc.get("created"):
+            meta["created"] = doc["created"]
+
+        chunks = parse_plaintext(file_path, content)
+        if not chunks:
+            return False
+
+        texts = [c.content for c in chunks]
+        embeddings: list[list[float]] = []
+        for i in range(0, len(texts), _EMBED_BATCH):
+            embeddings.extend(embed_documents(texts[i : i + _EMBED_BATCH]))
+
+        ids = [f"paperless::{file_path}#chunk_{i}" for i in range(len(chunks))]
+        metadatas = [
+            {
+                "file_path": file_path,
+                "section": c.section,
+                "file_hash": content_hash,
+                "chunk_index": i,
+                "source": "paperless",
+                "api_content_hash": content_hash,
+                **meta,
+            }
+            for i, c in enumerate(chunks)
+        ]
+
+        self.collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=metadatas,
+        )
+
+        self._file_hashes[doc_key] = content_hash
+        self._file_sources[doc_key] = "paperless"
+        self._api_content_hashes[doc_key] = content_hash
+        self._paperless_doc_paths[str(doc_id)] = file_path
+        logger.info("Indexed paperless doc %s [%s] (%d chunks)", doc_id, file_path, len(chunks))
         return True
 
     def remove_file(self, file_path: str, source: str = "obsidian"):
@@ -185,7 +237,7 @@ class Indexer:
         doc_key = self._doc_key(source, file_path)
         try:
             # Current-style chunks: have an explicit source field.
-            self.collection.delete(where={"file_path": file_path, "source": source})
+            self.collection.delete(where={"$and": [{"file_path": file_path}, {"source": source}]})
         except Exception:
             pass
         try:
@@ -214,9 +266,17 @@ class Indexer:
     def full_reindex(self, base_path: str | None = None, source: str = "obsidian", on_progress=None) -> int:
         """Walk *base_path* (default: VAULT_PATH) and index every ``.md`` and ``.pdf`` file.
 
+        For ``source="paperless"`` with ``PAPERLESS_URL`` configured, fetches
+        all documents from the Paperless REST API instead of scanning the file
+        system.  This finds *all* documents (including those without an archive
+        version) and avoids N+1 HTTP requests.
+
         *on_progress(processed, total)* is called after each file so callers
         can track live progress. Returns the number of files actually updated.
         """
+        if source == "paperless":
+            return self._reindex_paperless_api(on_progress)
+
         root = Path(base_path or VAULT_PATH)
         count = 0
 
@@ -231,26 +291,20 @@ class Indexer:
         def _is_hidden(rel: Path) -> bool:
             return any(p.startswith(".") for p in rel.parts)
 
-        if source == "obsidian":
-            # Pass 1: register all .md files so wikilinks resolve correctly
-            for md_file in root.rglob("*.md"):
-                rel = md_file.relative_to(root)
-                if not _is_hidden(rel):
-                    self.link_graph.register(str(rel))
+        # Pass 1: register all .md files so wikilinks resolve correctly
+        for md_file in root.rglob("*.md"):
+            rel = md_file.relative_to(root)
+            if not _is_hidden(rel):
+                self.link_graph.register(str(rel))
 
-            all_files = [
-                f
-                for f in sorted(root.rglob("*.md")) + sorted(root.rglob("*.pdf"))
-                if not _is_hidden(f.relative_to(root))
-            ]
-        else:
-            # Paperless archive: PDFs only, no hidden-dir filtering needed
-            all_files = sorted(root.rglob("*.pdf"))
+        all_files = [
+            f
+            for f in sorted(root.rglob("*.md")) + sorted(root.rglob("*.pdf"))
+            if not _is_hidden(f.relative_to(root))
+        ]
 
         total = len(all_files)
 
-        # Report total immediately so callers can show the correct denominator
-        # even before the first file is processed.
         if on_progress:
             on_progress(0, total)
 
@@ -268,6 +322,179 @@ class Indexer:
         self._cleanup_deleted(source=source, base_path=str(root))
         logger.info("Full reindex [%s] complete – %d files updated.", source, count)
         return count
+
+    def _reindex_paperless_api(self, on_progress=None) -> int:
+        """Fetch all Paperless documents via the REST API and index them.
+
+        Replaces the filesystem-based reindex with ~38 paginated API calls
+        (page_size=100) that cover *all* documents, including those without
+        an archive version.
+        """
+        from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+        if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+            logger.warning("Paperless API not configured — skipping reindex")
+            return 0
+
+        import requests
+        headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+        # Phase 1: collect all documents from the API
+        all_docs: list[dict] = []
+        page = 1
+        fetch_complete = False
+        while True:
+            try:
+                resp = requests.get(
+                    f"{PAPERLESS_URL}/api/documents/",
+                    params={
+                        "page": page,
+                        "page_size": 100,
+                        "fields": "id,content,archive_filename,title,correspondent,tags,created",
+                    },
+                    headers=headers,
+                    timeout=30,
+                )
+            except Exception as e:
+                logger.error("Paperless API request failed: %s", e)
+                break
+            if not resp.ok:
+                logger.error("Paperless API returned %d", resp.status_code)
+                break
+            data = resp.json()
+            all_docs.extend(data.get("results", []))
+            if not data.get("next"):
+                fetch_complete = True
+                break
+            page += 1
+
+        if not all_docs and not fetch_complete:
+            logger.warning("No documents returned from Paperless API (fetch incomplete)")
+            return 0
+
+        logger.info("Fetched %d documents from Paperless API (%d pages)", len(all_docs), page)
+        total = len(all_docs)
+
+        if on_progress:
+            on_progress(0, total)
+
+        # Phase 2: index each document
+        count = 0
+        indexed_file_paths: set[str] = set()
+        for processed, doc in enumerate(all_docs, start=1):
+            try:
+                # List responses may omit content; fetch individual doc details.
+                if "content" not in doc and doc.get("id") is not None:
+                    try:
+                        detail = requests.get(
+                            f"{PAPERLESS_URL}/api/documents/{doc['id']}/",
+                            headers=headers,
+                            timeout=10,
+                        )
+                        if detail.ok:
+                            doc = detail.json()
+                    except Exception as e:
+                        logger.warning("Failed to fetch detail for doc %s: %s", doc["id"], e)
+                # Track the file path that will actually be used for indexing
+                fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
+                indexed_file_paths.add(fp)
+                if self.index_paperless_doc(doc):
+                    count += 1
+            except Exception as e:
+                logger.error("Error indexing paperless doc %s: %s", doc.get("id"), e)
+
+            if on_progress:
+                on_progress(processed, total)
+
+        # Phase 3: remove documents no longer in Paperless
+        # Only run cleanup when all pages were fetched successfully;
+        # a partial fetch would incorrectly delete still-existing docs.
+        if fetch_complete:
+            for doc_key in list(self._file_hashes):
+                if self._file_sources.get(doc_key, "obsidian") != "paperless":
+                    continue
+                fp = self._file_path_from_key(doc_key)
+                if fp not in indexed_file_paths:
+                    self.remove_file(fp, source="paperless")
+                    logger.info("Removed deleted paperless doc from index: %s", fp)
+        else:
+            logger.warning("Skipping cleanup — API fetch was incomplete (%d pages, %d docs)", page, len(all_docs))
+
+        logger.info("Full reindex [paperless] complete – %d docs updated.", count)
+        return count
+
+    def reindex_paperless_doc(self, doc_id: int) -> bool:
+        """Re-index a single Paperless document by its ID.
+
+        Called by the webhook endpoint when Paperless notifies about a change.
+        """
+        from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+        if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+            return False
+
+        import requests
+        headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+        try:
+            resp = requests.get(
+                f"{PAPERLESS_URL}/api/documents/{doc_id}/",
+                headers=headers,
+                timeout=10,
+            )
+            if not resp.ok:
+                raise RuntimeError(f"Paperless doc {doc_id} not found (HTTP {resp.status_code})")
+            return self.index_paperless_doc(resp.json())
+        except Exception:
+            logger.exception("Failed to fetch/index paperless doc %d", doc_id)
+            raise
+
+    def remove_paperless_doc(self, doc_id: int):
+        """Remove a Paperless document from the index by its ID."""
+        # Collect all file paths for this doc (synthetic path + metadata matches)
+        paths_to_remove: set[str] = set()
+
+        synthetic = f"paperless/{doc_id}.pdf"
+        if self._doc_key("paperless", synthetic) in self._file_hashes:
+            paths_to_remove.add(synthetic)
+
+        for doc_key in list(self._file_hashes):
+            if self._file_sources.get(doc_key, "obsidian") != "paperless":
+                continue
+            fp = self._file_path_from_key(doc_key)
+            if fp == synthetic:
+                paths_to_remove.add(fp)
+
+        try:
+            results = self.collection.get(
+                where={"paperless_doc_id": str(doc_id)},
+                include=["metadatas"],
+            )
+            if results["ids"]:
+                for m in results["metadatas"]:
+                    fp = m.get("file_path", "")
+                    if fp:
+                        paths_to_remove.add(fp)
+        except Exception:
+            pass
+
+        self._paperless_doc_paths.pop(str(doc_id), None)
+        for fp in paths_to_remove:
+            self.remove_file(fp, source="paperless")
+
+    def _remove_all_paths_for_paperless_doc(self, doc_id: int):
+        """Remove all indexed paths associated with a Paperless document ID."""
+        self._paperless_doc_paths.pop(str(doc_id), None)
+        try:
+            results = self.collection.get(
+                where={"paperless_doc_id": str(doc_id)},
+                include=["metadatas"],
+            )
+            if results["ids"]:
+                for m in results["metadatas"]:
+                    fp = m.get("file_path", "")
+                    if fp:
+                        self.remove_file(fp, source="paperless")
+        except Exception:
+            pass
 
     def _cleanup_deleted(self, source: str = "obsidian", base_path: str | None = None):
         """Remove index entries whose source file no longer exists."""
@@ -289,108 +516,3 @@ class Indexer:
             "paperless_files": paperless_count,
             "link_graph_edges": len(self.link_graph),
         }
-
-
-# ---------------------------------------------------------------------------
-# Optional Paperless API metadata enrichment
-# ---------------------------------------------------------------------------
-
-def _paperless_api_data(file_path: str) -> dict:
-    """Fetch document content and metadata from the Paperless REST API.
-
-    Called only when PAPERLESS_URL and PAPERLESS_TOKEN are configured.
-    Returns ``{"content": "...", "meta": {...}}`` on success.
-    The *content* key contains the OCR text that Paperless already extracted,
-    avoiding a redundant (and inferior) ``pypdf`` parse.
-    ``meta`` always includes ``paperless_doc_id`` when found.
-    Returns ``{}`` on any failure so the caller can fall back to ``parse_pdf``.
-    """
-    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
-    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
-        return {}
-
-    import requests
-    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
-
-    try:
-        data = _fetch_paperless_document(file_path, PAPERLESS_URL, headers)
-        if not data:
-            return {}
-
-        doc_id = data.get("id")
-        meta: dict = {}
-        if doc_id is not None:
-            meta["paperless_doc_id"] = str(doc_id)
-        if data.get("title"):
-            meta["title"] = data["title"]
-        if data.get("correspondent"):
-            meta["correspondent"] = str(data["correspondent"])
-        tags = data.get("tags", [])
-        if tags:
-            meta["tags"] = ",".join(str(t) for t in tags)
-        if data.get("created"):
-            meta["created"] = data["created"]
-        result: dict = {"meta": meta}
-        content = data.get("content", "").strip()
-        if content:
-            result["content"] = content
-        return result
-    except Exception:
-        return {}
-
-
-def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
-    """Fetch a single Paperless document, looking up by ID or archive filename.
-
-    Uses a two-pass strategy: first tries an exact full-path match against
-    ``archive_filename``, then falls back to basename-only if no full-path
-    match was found *and* the basename is unambiguous (exactly one hit).
-    Paginates through all API results to guarantee the correct document
-    is found even when many files share the same basename.
-    """
-    import requests
-
-    stem = Path(file_path).stem
-    # Fast path: numeric filename IS the document ID
-    if stem.isdigit():
-        resp = requests.get(
-            f"{base_url}/api/documents/{stem}/",
-            headers=headers,
-            timeout=5,
-        )
-        if resp.ok:
-            return resp.json()
-
-    # Slow path: search by archive filename, paginate until exhausted
-    filename = Path(file_path).name
-    basename_matches: list[dict] = []
-    page = 1
-
-    while True:
-        resp = requests.get(
-            f"{base_url}/api/documents/",
-            params={"query": f"archive_filename:{filename}", "page": page, "page_size": 25},
-            headers=headers,
-            timeout=10,
-        )
-        if not resp.ok:
-            break
-
-        data = resp.json()
-        for doc in data.get("results", []):
-            archive_fn = doc.get("archive_filename", "")
-            # Exact full-path match — always preferred
-            if archive_fn == file_path:
-                return doc
-            # Collect all basename matches to check uniqueness later
-            if Path(archive_fn).name == filename:
-                basename_matches.append(doc)
-
-        if not data.get("next"):
-            break
-        page += 1
-
-    # Only use basename fallback when exactly one document matched (unambiguous)
-    if len(basename_matches) == 1:
-        return basename_matches[0]
-    return None

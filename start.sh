@@ -19,6 +19,20 @@ cd "$SCRIPT_DIR"
 
 die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 
+_needs_obsidian()  { [[ "${DATA_SOURCES:-all}" != "paperless" ]]; }
+_needs_paperless() { [[ "${DATA_SOURCES:-all}" != "obsidian"  ]]; }
+
+_show_token() {
+  local token=$1
+  if [[ -n "$token" ]]; then
+    echo -e "${BOLD}🔐 API bearer token${NC}"
+    echo -e "   $token"
+    echo -e "   Save this token. Clients must send: ${BOLD}Authorization: Bearer <token>${NC}\n"
+  else
+    echo -e "${YELLOW}🔓 Authentication disabled.${NC}\n"
+  fi
+}
+
 # _update_env KEY VALUE [KEY VALUE …]  –  atomically update key=value pairs in .env
 _sed_escape_replacement() {
   # Escape characters that are special in sed replacement strings.
@@ -47,11 +61,13 @@ _update_env() {
 }
 
 _summary() {
-  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
-  else
+  if [[ "${ACCESS_MODE:-host}" == "internal" ]]; then
     echo -e "   API:     ${BLUE}internal Docker network only${NC}"
     echo -e "   Network: ${BOLD}${DOCKER_NETWORK:-rag-network}${NC}"
+  elif [[ "${ACCESS_MODE:-host}" == "network" ]]; then
+    echo -e "   API:     ${BLUE}http://0.0.0.0:${HOST_PORT:-$_DEFAULT_PORT}${NC} (all interfaces)"
+  else
+    echo -e "   API:     ${BLUE}http://localhost:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
   fi
   echo -e "   Logs:    ${BOLD}docker compose logs -f ${_DEFAULT_RAG_API_SERVICE}${NC}"
   echo -e "   Stop:    ${BOLD}docker compose down${NC}"
@@ -85,25 +101,32 @@ _json_int() {
 
 _compose() {
   local files=(-f docker-compose.yml)
-  [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
-  [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
-  if [[ "${DATA_SOURCES:-all}" != "obsidian" ]] && [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && [[ -d "${PAPERLESS_ARCHIVE_PATH}" ]]; then
-    files+=(-f docker-compose.paperless.yml)
-  fi
+  _needs_obsidian && files+=(-f docker-compose.obsidian.yml)
+  [[ "${ACCESS_MODE:-host}" != "internal" ]] && files+=(-f docker-compose.host.yml)
   docker compose "${files[@]}" "$@"
 }
 
 _validate_config() {
-  if [[ "${DATA_SOURCES:-all}" != "paperless" ]]; then
+  if _needs_obsidian; then
     [[ -n "${VAULT_PATH:-}" ]] || die "VAULT_PATH is required when DATA_SOURCES=${DATA_SOURCES:-all}."
     [[ -d "${VAULT_PATH}" ]]   || die "VAULT_PATH does not exist: ${VAULT_PATH}"
+  fi
+  if _needs_paperless; then
+    [[ -n "${PAPERLESS_URL:-}" ]]   || die "PAPERLESS_URL is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+    [[ -n "${PAPERLESS_TOKEN:-}" ]] || die "PAPERLESS_TOKEN is required when DATA_SOURCES=${DATA_SOURCES:-all}."
+    if [[ "${ACCESS_MODE:-host}" == "network" ]]; then
+      local _default="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+      [[ -n "${RAG_API_INTERNAL_URL:-}" && "${RAG_API_INTERNAL_URL}" != "$_default" ]] \
+        || die "RAG_API_INTERNAL_URL must be set to a Paperless-reachable URL in network mode."
+    fi
   fi
 }
 
 _api_get() {
   local path=$1
-  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    local url="http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${path}"
+  if [[ "${ACCESS_MODE:-host}" != "internal" ]]; then
+    # Always use 127.0.0.1 for local health checks (0.0.0.0 may not work on macOS)
+    local url="http://127.0.0.1:${HOST_PORT:-$_DEFAULT_PORT}${path}"
     local -a curl_args=(-sf)
     [[ "${AUTH_REQUIRED:-true}" == "true" ]] && curl_args+=(-H "Authorization: Bearer ${API_BEARER_TOKEN}")
     curl "${curl_args[@]}" "$url"
@@ -123,6 +146,19 @@ with urllib.request.urlopen(req, timeout=5) as resp:
 
 # ── Shared prompt helpers (used by both fresh setup and .env reuse) ───────
 
+_prompt_webhook_url() {
+  echo -e "   ${BLUE}ℹ️  Paperless needs a URL to reach rag-api for webhook callbacks.${NC}"
+  echo -e "      Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT:-$_DEFAULT_PORT})."
+  echo -n "🔗 Webhook callback URL: "
+  read -r RAG_API_INTERNAL_URL
+  while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
+    echo -e "${RED}❌ This field is required in network mode.${NC}"
+    echo -n "🔗 Webhook callback URL: "
+    read -r RAG_API_INTERNAL_URL
+  done
+  echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
+}
+
 _prompt_vault_path() {
   while true; do
     printf "📁 Path to your vault ${BLUE}(directory containing .md files)${NC}: "
@@ -137,43 +173,25 @@ _prompt_vault_path() {
   done
 }
 
-_prompt_paperless_path() {
-  # Sets PAPERLESS_ARCHIVE_PATH; empty string means the user chose to skip.
-  while true; do
-    printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip)${NC}: "
-    read -r PAPERLESS_ARCHIVE_PATH
-    PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
-    if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
-      if [[ "$DATA_SOURCES" == "paperless" ]]; then
-        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – no Paperless documents will be indexed.${NC}\n"
-      else
-        echo -e "   ${YELLOW}⚠️  Paperless archive skipped – only Obsidian will be indexed.${NC}\n"
-      fi
-      return 0
-    fi
-    if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
-      PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
-      echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
-      return 0
-    fi
-    echo -e "${RED}❌ Directory not found: $PAPERLESS_ARCHIVE_PATH${NC}"
-  done
-}
-
 _prompt_paperless_api() {
-  # Sets PAPERLESS_URL, PAPERLESS_TOKEN, PAPERLESS_PUBLIC_URL (all may remain empty).
-  echo -n "🌐 Paperless URL for API enrichment (title/tags) [leave empty to skip]: "
-  read -r PAPERLESS_URL
-  if [[ -n "$PAPERLESS_URL" ]]; then
+  while true; do
+    echo -n "🌐 Paperless URL (e.g. http://paperless:8000): "
+    read -r PAPERLESS_URL
+    [[ -n "$PAPERLESS_URL" ]] && break
+    echo -e "${RED}❌ This field is required.${NC}"
+  done
+  while true; do
     echo -n "🔑 Paperless API token: "
     read -rs PAPERLESS_TOKEN; echo ""
-    echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
-    echo -e "      can open the source document in your Paperless UI."
-    echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
-    echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
-    read -r PAPERLESS_PUBLIC_URL
-    echo -e "   ${GREEN}✓${NC} Paperless: $PAPERLESS_URL\n"
-  fi
+    [[ -n "$PAPERLESS_TOKEN" ]] && break
+    echo -e "${RED}❌ This field is required.${NC}"
+  done
+  echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used to build direct links in search results so n8n/agents"
+  echo -e "      can open the source document in your Paperless UI."
+  echo -e "      ${YELLOW}Leave empty${NC} to omit links – results will then only show the filename."
+  echo -n "🔗 Paperless public URL (e.g. https://paperless.example.com) [leave empty to skip]: "
+  read -r PAPERLESS_PUBLIC_URL
+  echo -e "   ${GREEN}✓${NC} Paperless API: $PAPERLESS_URL\n"
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────
@@ -197,19 +215,18 @@ echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 _run_setup() {
   local generated_token=""
   local ollama_service_name=""
-  PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL="" PAPERLESS_ARCHIVE_PATH=""
+  PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL=""
 
   # 1. Vault path – only when indexing Obsidian
-  if [[ "$DATA_SOURCES" != "paperless" ]]; then
+  if _needs_obsidian; then
     _prompt_vault_path
   else
     VAULT_PATH=""
   fi
 
   # 2. Paperless config – only when indexing Paperless
-  if [[ "$DATA_SOURCES" != "obsidian" ]]; then
-    _prompt_paperless_path
-    [[ -n "$PAPERLESS_ARCHIVE_PATH" ]] && _prompt_paperless_api
+  if _needs_paperless; then
+    _prompt_paperless_api
   fi
 
   # 3. Ollama – local or external?
@@ -236,40 +253,61 @@ _run_setup() {
   # 4. Access mode
   HOST_BIND_ADDRESS="$_DEFAULT_BIND"
   HOST_PORT="$_DEFAULT_PORT"
-  echo -n "🌐 Publish API on the host ($_DEFAULT_BIND:$_DEFAULT_PORT)? [Y/n] "
-  read -r PUBLISH_HOST
+  echo -e "🌐 Access mode:"
+  echo -e "   ${BOLD}1)${NC} Internal  – Docker network only, no published port"
+  echo -e "   ${BOLD}2)${NC} Host      – localhost:${_DEFAULT_PORT} (this machine only)"
+  echo -e "   ${BOLD}3)${NC} Network   – 0.0.0.0:${_DEFAULT_PORT} (reachable from other machines)"
+  echo -n "   Choose [1/2/3] (default: 2): "
+  read -r ACCESS_CHOICE
 
-  if [[ "$PUBLISH_HOST" =~ ^[nN]$ ]]; then
-    ACCESS_MODE="internal"
-    PUBLIC_URL="http://rag-api:8080"
-    echo -n "🔐 Require bearer token for internal-only mode? [y/N] "
-    read -r REQUIRE_AUTH
-    if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
+  case "${ACCESS_CHOICE:-2}" in
+    1)
+      ACCESS_MODE="internal"
+      HOST_BIND_ADDRESS="$_DEFAULT_BIND"
+      PUBLIC_URL="http://rag-api:8080"
+      echo -n "🔐 Require bearer token? [y/N] "
+      read -r REQUIRE_AUTH
+      if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
+        AUTH_REQUIRED="true"
+        echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
+      else
+        AUTH_REQUIRED="false"
+        echo -e "   ${GREEN}✓${NC} Internal-only mode, no authentication (trusted network)\n"
+      fi
+      ;;
+    3)
+      ACCESS_MODE="network"
+      HOST_BIND_ADDRESS="0.0.0.0"
+      PUBLIC_URL="http://0.0.0.0:$_DEFAULT_PORT"
       AUTH_REQUIRED="true"
-      generated_token="$(openssl rand -hex 32)"
-      echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
-    else
-      AUTH_REQUIRED="false"
-      echo -e "   ${GREEN}✓${NC} Internal-only mode, no authentication (trusted network)\n"
-    fi
-  else
-    ACCESS_MODE="host"
-    PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
-    echo -n "🔐 Require bearer token? [Y/n] "
-    read -r REQUIRE_AUTH
-    if [[ "$REQUIRE_AUTH" =~ ^[nN]$ ]]; then
-      AUTH_REQUIRED="false"
-      echo -e "   ${YELLOW}⚠️  Authentication disabled – API is open to anyone who can reach port ${HOST_PORT}.${NC}"
-      echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
-    else
-      AUTH_REQUIRED="true"
-      generated_token="$(openssl rand -hex 32)"
-      echo -e "   ${GREEN}✓${NC} Host access enabled at http://${HOST_BIND_ADDRESS}:${HOST_PORT}\n"
-    fi
+      echo -e "   ${GREEN}✓${NC} Network access on 0.0.0.0:${HOST_PORT} (auth enforced)\n"
+      ;;
+    *)
+      ACCESS_MODE="host"
+      PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
+      echo -n "🔐 Require bearer token? [Y/n] "
+      read -r REQUIRE_AUTH
+      if [[ "$REQUIRE_AUTH" =~ ^[nN]$ ]]; then
+        AUTH_REQUIRED="false"
+        echo -e "   ${YELLOW}⚠️  Authentication disabled – API is open to anyone who can reach port ${HOST_PORT}.${NC}"
+        echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
+      else
+        AUTH_REQUIRED="true"
+        echo -e "   ${GREEN}✓${NC} Host access enabled at http://${HOST_BIND_ADDRESS}:${HOST_PORT}\n"
+      fi
+      ;;
+  esac
+
+  [[ "$AUTH_REQUIRED" == "true" ]] && generated_token="$(openssl rand -hex 32)"
+
+  # 5. Webhook callback URL (network + paperless only)
+  RAG_API_INTERNAL_URL="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+  if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
+    _prompt_webhook_url
   fi
 
-  # 5. Docker network (optional)
-  echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
+  # 6. Docker network (optional)
+  echo -n "🐳 External Docker network to join (leave empty for default 'rag-network'): "
   read -r DOCKER_NETWORK
   if [[ -n "$DOCKER_NETWORK" ]]; then
     echo -e "   ${GREEN}✓${NC} Will join network: $DOCKER_NETWORK\n"
@@ -278,7 +316,7 @@ _run_setup() {
     echo -e "   ${GREEN}✓${NC} Using default network: rag-network\n"
   fi
 
-  # 6. Write .env
+  # 7. Write .env
   cat > .env <<EOF
 DATA_SOURCES=$DATA_SOURCES
 VAULT_PATH=$VAULT_PATH
@@ -291,29 +329,23 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
-PAPERLESS_ARCHIVE_PATH=$PAPERLESS_ARCHIVE_PATH
+RAG_API_INTERNAL_URL=$RAG_API_INTERNAL_URL
 PAPERLESS_URL=$PAPERLESS_URL
 PAPERLESS_TOKEN=$PAPERLESS_TOKEN
 PAPERLESS_PUBLIC_URL=$PAPERLESS_PUBLIC_URL
 EOF
   echo -e "${GREEN}✅ .env created${NC}\n"
-  if [[ "$AUTH_REQUIRED" == "true" ]]; then
-    echo -e "${BOLD}🔐 API bearer token${NC}"
-    echo -e "   $generated_token"
-    echo -e "   Save this token. Clients must send: ${BOLD}Authorization: Bearer <token>${NC}\n"
-  else
-    echo -e "${YELLOW}🔓 Authentication disabled.${NC}\n"
-  fi
+  _show_token "$generated_token"
 }
 
 # ── Check for existing .env with a valid vault path ───────────────────────
 
 if [[ -f .env ]]; then
   EXISTING_VAULT=$(grep -E '^VAULT_PATH=' .env | cut -d= -f2-)
-  EXISTING_PAPERLESS=$(grep -E '^PAPERLESS_ARCHIVE_PATH=' .env | cut -d= -f2-)
+  EXISTING_PAPERLESS_URL=$(grep -E '^PAPERLESS_URL=' .env | cut -d= -f2-)
   _env_valid=false
-  [[ -n "$EXISTING_VAULT"     && -d "$EXISTING_VAULT"     ]] && _env_valid=true
-  [[ -n "$EXISTING_PAPERLESS" && -d "$EXISTING_PAPERLESS" ]] && _env_valid=true
+  [[ -n "$EXISTING_VAULT"         && -d "$EXISTING_VAULT"         ]] && _env_valid=true
+  [[ -n "$EXISTING_PAPERLESS_URL"                                  ]] && _env_valid=true
 
   if [[ "$_env_valid" == true ]]; then
     echo -e "${BOLD}📄 Existing .env found:${NC}"
@@ -339,13 +371,16 @@ if [[ -f .env ]]; then
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
       DOCKER_NETWORK="${DOCKER_NETWORK:-}"
-      PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH:-}"
-      if [[ "$ACCESS_MODE" == "host" ]]; then
-        PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
-        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
-      else
+      if [[ "$ACCESS_MODE" == "internal" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${_DEFAULT_RAG_API_SERVICE}:8080}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
+      elif [[ "$ACCESS_MODE" == "network" ]]; then
+        HOST_BIND_ADDRESS="0.0.0.0"
+        PUBLIC_URL="${PUBLIC_URL:-http://0.0.0.0:${HOST_PORT}}"
+        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
+      else
+        PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
+        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
       fi
 
       # Mint a new token if auth is required but none exists yet
@@ -364,30 +399,36 @@ if [[ -f .env ]]; then
       # run uses no flag (→ all), so Paperless was never configured.
 
       # Vault path needed but missing
-      if [[ "$DATA_SOURCES" != "paperless" && (-z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}") ]]; then
+      if _needs_obsidian && [[ -z "${VAULT_PATH:-}" || ! -d "${VAULT_PATH:-}" ]]; then
         echo -e "${YELLOW}⚠️  VAULT_PATH is missing or invalid. Please provide it now.${NC}"
         _prompt_vault_path
         _update_env VAULT_PATH "$VAULT_PATH"
       fi
 
-      # Paperless archive path needed but missing
-      if [[ "$DATA_SOURCES" != "obsidian" && (-z "${PAPERLESS_ARCHIVE_PATH:-}" || ! -d "${PAPERLESS_ARCHIVE_PATH:-}") ]]; then
-        echo -e "${YELLOW}⚠️  PAPERLESS_ARCHIVE_PATH is missing or invalid. Please provide it now.${NC}"
-        _prompt_paperless_path
-        if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
+      # Paperless API config needed but missing
+      if _needs_paperless && [[ -z "${PAPERLESS_URL:-}" || -z "${PAPERLESS_TOKEN:-}" ]]; then
+        echo -e "${YELLOW}\u26a0\ufe0f  Paperless API config is incomplete. Please provide it now.${NC}"
+        _prompt_paperless_api
+        if [[ -z "$PAPERLESS_URL" ]]; then
           DATA_SOURCES="obsidian"
           _update_env DATA_SOURCES "obsidian"
         else
-          _update_env PAPERLESS_ARCHIVE_PATH "$PAPERLESS_ARCHIVE_PATH"
-          # Also prompt for API URL + token if not yet configured
-          if [[ -z "${PAPERLESS_URL:-}" ]]; then
-            _prompt_paperless_api
-            _update_env \
-              PAPERLESS_URL          "$PAPERLESS_URL" \
-              PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
-              PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
-          fi
+          _update_env \
+            PAPERLESS_URL          "$PAPERLESS_URL" \
+            PAPERLESS_TOKEN        "$PAPERLESS_TOKEN" \
+            PAPERLESS_PUBLIC_URL   "$PAPERLESS_PUBLIC_URL"
         fi
+      fi
+
+      # Webhook callback URL needed but missing in network mode
+      if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
+        _rag_default="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+        if [[ -z "${RAG_API_INTERNAL_URL:-}" || "$RAG_API_INTERNAL_URL" == "$_rag_default" ]]; then
+          echo -e "${YELLOW}⚠️  Network mode requires a webhook callback URL reachable from Paperless.${NC}"
+          _prompt_webhook_url
+          _update_env RAG_API_INTERNAL_URL "$RAG_API_INTERNAL_URL"
+        fi
+        unset _rag_default
       fi
 
       LOCAL_OLLAMA=false
@@ -471,7 +512,7 @@ while true; do
     break
   fi
 
-  if [[ "${DATA_SOURCES:-all}" == "all" && -n "${PAPERLESS_ARCHIVE_PATH:-}" ]]; then
+  if [[ "${DATA_SOURCES:-all}" == "all" && -n "${PAPERLESS_URL:-}" ]]; then
     OBS_IDX=$(_json_int "$STATUS" "obsidian_indexed")
     OBS_TOT=$(_json_int "$STATUS" "obsidian_total")
     PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")

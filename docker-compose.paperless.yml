@@ -1,9 +1,0 @@
-# Override file: mounts the Paperless archive directory into rag-api.
-# Added automatically by start.sh when PAPERLESS_ARCHIVE_PATH is set.
-# Do not use this file in Obsidian-only deployments.
-services:
-  rag-api:
-    volumes:
-      - ${PAPERLESS_ARCHIVE_PATH}:/paperless-archive:ro
-    environment:
-      PAPERLESS_ARCHIVE_PATH: "/paperless-archive"
