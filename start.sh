@@ -359,8 +359,8 @@ if [[ -f .env ]]; then
       fi
 
       # Paperless API config needed but missing
-      if [[ "$DATA_SOURCES" != "obsidian" && -z "${PAPERLESS_URL:-}" ]]; then
-        echo -e "${YELLOW}⚠️  PAPERLESS_URL is missing. Please provide it now.${NC}"
+      if [[ "$DATA_SOURCES" != "obsidian" && ( -z "${PAPERLESS_URL:-}" || -z "${PAPERLESS_TOKEN:-}" ) ]]; then
+        echo -e "${YELLOW}\u26a0\ufe0f  Paperless API config is incomplete. Please provide it now.${NC}"
         _prompt_paperless_api
         if [[ -z "$PAPERLESS_URL" ]]; then
           DATA_SOURCES="obsidian"
