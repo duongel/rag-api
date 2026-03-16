@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/duongel/rag-api/compare/v1.4.3...v1.5.0) (2026-03-16)
+
+
+### Features
+
+* improve keyword search with relevance-based scoring ([cea6b9c](https://github.com/duongel/rag-api/commit/cea6b9c7f75688c3f2ae12dc7eda6c501d462b7b))
+
 ## [1.4.3](https://github.com/duongel/rag-api/compare/v1.4.2...v1.4.3) (2026-03-16)
 
 
