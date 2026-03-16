@@ -304,13 +304,47 @@ class Searcher:
     # ------------------------------------------------------------------
 
     def get_note(self, path: str) -> dict | None:
-        """Return full Markdown content of a note by relative path."""
-        if DATA_SOURCES == "paperless":
+        """Return full content of a note by relative path.
+
+        For Obsidian notes the file is read from disk.  For Paperless
+        documents (or any file not on disk) the content is reassembled
+        from the chunks stored in ChromaDB.
+        """
+        # Try the Obsidian vault first
+        if DATA_SOURCES != "paperless":
+            full_path = Path(VAULT_PATH) / path
+            if full_path.exists():
+                return {
+                    "file_path": path,
+                    "content": full_path.read_text(encoding="utf-8"),
+                }
+
+        # Fall back to ChromaDB (covers Paperless and any indexed-only docs)
+        return self._get_note_from_index(path)
+
+    def _get_note_from_index(self, path: str) -> dict | None:
+        """Reassemble a document's content from its indexed chunks."""
+        try:
+            results = self.collection.get(
+                where={"file_path": path},
+                include=["documents", "metadatas"],
+            )
+        except Exception:
             return None
-        full_path = Path(VAULT_PATH) / path
-        if not full_path.exists():
+
+        if not results["ids"]:
             return None
-        return {
-            "file_path": path,
-            "content": full_path.read_text(encoding="utf-8"),
-        }
+
+        # Sort chunks by chunk_index to restore original order
+        pairs = sorted(
+            zip(results["metadatas"], results["documents"]),
+            key=lambda p: p[0].get("chunk_index", 0),
+        )
+        content = "\n\n".join(doc for _, doc in pairs)
+        meta = pairs[0][0]
+        note: dict = {"file_path": path, "content": content}
+        if meta.get("source"):
+            note["source"] = meta["source"]
+        if meta.get("paperless_doc_id"):
+            note["paperless_doc_id"] = meta["paperless_doc_id"]
+        return note
