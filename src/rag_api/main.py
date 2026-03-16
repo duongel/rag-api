@@ -110,9 +110,9 @@ def _register_paperless_webhook():
                             )
                             if update_resp.ok:
                                 logger.info("Webhook headers updated successfully")
+                                found_existing = True
                             else:
-                                logger.warning("Failed to update webhook headers (HTTP %d)", update_resp.status_code)
-                            found_existing = True
+                                logger.warning("Failed to update webhook headers (HTTP %d) — will re-create workflow", update_resp.status_code)
                         else:
                             logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
                             found_existing = True

@@ -29,6 +29,8 @@ class Indexer:
         self._file_sources: dict[str, str] = {}
         # Tracks API content hashes separately for Paperless documents
         self._api_content_hashes: dict[str, str] = {}
+        # Maps paperless doc_id (str) → currently indexed file_path for O(1) rename detection
+        self._paperless_doc_paths: dict[str, str] = {}
         self.link_graph = LinkGraph()
         self._load_file_hashes()
 
@@ -59,6 +61,9 @@ class Indexer:
                     ach = meta.get("api_content_hash")
                     if ach:
                         self._api_content_hashes[doc_key] = ach
+                    pdid = meta.get("paperless_doc_id")
+                    if pdid and source == "paperless":
+                        self._paperless_doc_paths[pdid] = fp
         except Exception:
             pass
 
@@ -168,26 +173,9 @@ class Indexer:
 
         content_hash = hashlib.sha256(content.encode()).hexdigest()
 
-        # Check if the doc was already indexed under a different path (rename/move).
-        # If so, skip the hash short-circuit so old paths get cleaned up.
-        path_changed = False
-        for existing_key, src in list(self._file_sources.items()):
-            if src != "paperless":
-                continue
-            existing_fp = self._file_path_from_key(existing_key)
-            if existing_fp == file_path:
-                continue
-            # Check if this key belongs to the same doc via Chroma metadata
-            try:
-                results = self.collection.get(
-                    where={"$and": [{"file_path": existing_fp}, {"paperless_doc_id": str(doc_id)}]},
-                    include=[],
-                )
-                if results["ids"]:
-                    path_changed = True
-                    break
-            except Exception:
-                pass
+        # O(1) rename detection: check if this doc_id was previously indexed under a different path
+        prev_path = self._paperless_doc_paths.get(str(doc_id))
+        path_changed = prev_path is not None and prev_path != file_path
 
         if not path_changed and self._api_content_hashes.get(doc_key) == content_hash:
             return False  # unchanged
@@ -240,6 +228,7 @@ class Indexer:
         self._file_hashes[doc_key] = content_hash
         self._file_sources[doc_key] = "paperless"
         self._api_content_hashes[doc_key] = content_hash
+        self._paperless_doc_paths[str(doc_id)] = file_path
         logger.info("Indexed paperless doc %s [%s] (%d chunks)", doc_id, file_path, len(chunks))
         return True
 
@@ -476,11 +465,13 @@ class Indexer:
         except Exception:
             pass
 
+        self._paperless_doc_paths.pop(str(doc_id), None)
         for fp in paths_to_remove:
             self.remove_file(fp, source="paperless")
 
     def _remove_all_paths_for_paperless_doc(self, doc_id: int):
         """Remove all indexed paths associated with a Paperless document ID."""
+        self._paperless_doc_paths.pop(str(doc_id), None)
         try:
             results = self.collection.get(
                 where={"paperless_doc_id": str(doc_id)},
