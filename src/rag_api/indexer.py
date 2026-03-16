@@ -8,7 +8,7 @@ import chromadb
 
 from .config import VAULT_PATH, CHROMA_PATH, PAPERLESS_ARCHIVE_PATH
 from .graph import LinkGraph
-from .parser import parse_markdown, parse_pdf, extract_wikilinks, extract_tags
+from .parser import parse_markdown, parse_pdf, parse_plaintext, extract_wikilinks, extract_tags
 
 from .embeddings import embed_documents
 
@@ -105,8 +105,15 @@ class Indexer:
                 pass
             chunks = parse_markdown(file_path, resolved_base)
         else:  # .pdf
-            extra_meta = _paperless_api_meta(file_path) if source == "paperless" else {}
-            chunks = parse_pdf(file_path, resolved_base)
+            chunks = None
+            if source == "paperless":
+                api_data = _paperless_api_data(file_path)
+                extra_meta = api_data.get("meta", {})
+                api_content = api_data.get("content")
+                if api_content:
+                    chunks = parse_plaintext(file_path, api_content)
+            if chunks is None:
+                chunks = parse_pdf(file_path, resolved_base)
 
         if not chunks:
             return False
@@ -209,6 +216,11 @@ class Indexer:
 
         total = len(all_files)
 
+        # Report total immediately so callers can show the correct denominator
+        # even before the first file is processed.
+        if on_progress:
+            on_progress(0, total)
+
         for processed, file_path in enumerate(all_files, start=1):
             rel_path = str(file_path.relative_to(root))
             try:
@@ -250,14 +262,14 @@ class Indexer:
 # Optional Paperless API metadata enrichment
 # ---------------------------------------------------------------------------
 
-def _paperless_api_meta(file_path: str) -> dict:
-    """Fetch document metadata from the Paperless REST API.
+def _paperless_api_data(file_path: str) -> dict:
+    """Fetch document content and metadata from the Paperless REST API.
 
     Called only when PAPERLESS_URL and PAPERLESS_TOKEN are configured.
-    Returns a dict with title/tags/correspondent keys, or {} on any failure.
-
-    Paperless archive filenames follow the pattern ``<pk>.pdf`` (or a custom
-    naming scheme). We derive the document ID from the stem and query the API.
+    Returns ``{"content": "...", "meta": {...}}`` on success.
+    The *content* key contains the OCR text that Paperless already extracted,
+    avoiding a redundant (and inferior) ``pypdf`` parse.
+    Returns ``{}`` on any failure so the caller can fall back to ``parse_pdf``.
     """
     from .config import PAPERLESS_URL, PAPERLESS_TOKEN
     if not PAPERLESS_URL or not PAPERLESS_TOKEN:
@@ -287,6 +299,10 @@ def _paperless_api_meta(file_path: str) -> dict:
             meta["tags"] = ",".join(str(t) for t in tags)
         if data.get("created"):
             meta["created"] = data["created"]
-        return meta
+        result: dict = {"meta": meta}
+        content = data.get("content", "").strip()
+        if content:
+            result["content"] = content
+        return result
     except Exception:
         return {}
