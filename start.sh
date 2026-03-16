@@ -72,11 +72,11 @@ _update_env() {
 }
 
 _summary() {
-  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
-    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
-  else
+  if [[ "${ACCESS_MODE:-host}" == "internal" ]]; then
     echo -e "   API:     ${BLUE}internal Docker network only${NC}"
     echo -e "   Network: ${BOLD}${DOCKER_NETWORK:-rag-network}${NC}"
+  else
+    echo -e "   API:     ${BLUE}http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${NC}"
   fi
   echo -e "   Logs:    ${BOLD}docker compose logs -f ${_DEFAULT_RAG_API_SERVICE}${NC}"
   echo -e "   Stop:    ${BOLD}docker compose down${NC}"
@@ -111,7 +111,7 @@ _json_int() {
 _compose() {
   local files=(-f docker-compose.yml)
   _needs_obsidian && files+=(-f docker-compose.obsidian.yml)
-  [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
+  [[ "${ACCESS_MODE:-host}" != "internal" ]] && files+=(-f docker-compose.host.yml)
   docker compose "${files[@]}" "$@"
 }
 
@@ -128,7 +128,7 @@ _validate_config() {
 
 _api_get() {
   local path=$1
-  if [[ "${ACCESS_MODE:-host}" == "host" ]]; then
+  if [[ "${ACCESS_MODE:-host}" != "internal" ]]; then
     local url="http://${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}:${HOST_PORT:-$_DEFAULT_PORT}${path}"
     local -a curl_args=(-sf)
     [[ "${AUTH_REQUIRED:-true}" == "true" ]] && curl_args+=(-H "Authorization: Bearer ${API_BEARER_TOKEN}")
@@ -243,39 +243,69 @@ _run_setup() {
   # 4. Access mode
   HOST_BIND_ADDRESS="$_DEFAULT_BIND"
   HOST_PORT="$_DEFAULT_PORT"
-  echo -n "🌐 Publish API on the host ($_DEFAULT_BIND:$_DEFAULT_PORT)? [Y/n] "
-  read -r PUBLISH_HOST
+  echo -e "🌐 Access mode:"
+  echo -e "   ${BOLD}1)${NC} Internal  – Docker network only, no published port"
+  echo -e "   ${BOLD}2)${NC} Host      – localhost:${_DEFAULT_PORT} (this machine only)"
+  echo -e "   ${BOLD}3)${NC} Network   – 0.0.0.0:${_DEFAULT_PORT} (reachable from other machines)"
+  echo -n "   Choose [1/2/3] (default: 2): "
+  read -r ACCESS_CHOICE
 
-  if [[ "$PUBLISH_HOST" =~ ^[nN]$ ]]; then
-    ACCESS_MODE="internal"
-    PUBLIC_URL="http://rag-api:8080"
-    echo -n "🔐 Require bearer token for internal-only mode? [y/N] "
-    read -r REQUIRE_AUTH
-    if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
+  case "${ACCESS_CHOICE:-2}" in
+    1)
+      ACCESS_MODE="internal"
+      HOST_BIND_ADDRESS="$_DEFAULT_BIND"
+      PUBLIC_URL="http://rag-api:8080"
+      echo -n "🔐 Require bearer token? [y/N] "
+      read -r REQUIRE_AUTH
+      if [[ "$REQUIRE_AUTH" =~ ^[yYjJ]$ ]]; then
+        AUTH_REQUIRED="true"
+        echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
+      else
+        AUTH_REQUIRED="false"
+        echo -e "   ${GREEN}✓${NC} Internal-only mode, no authentication (trusted network)\n"
+      fi
+      ;;
+    3)
+      ACCESS_MODE="network"
+      HOST_BIND_ADDRESS="0.0.0.0"
+      PUBLIC_URL="http://0.0.0.0:$_DEFAULT_PORT"
       AUTH_REQUIRED="true"
-      echo -e "   ${GREEN}✓${NC} Internal-only mode with bearer token\n"
-    else
-      AUTH_REQUIRED="false"
-      echo -e "   ${GREEN}✓${NC} Internal-only mode, no authentication (trusted network)\n"
-    fi
-  else
-    ACCESS_MODE="host"
-    PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
-    echo -n "🔐 Require bearer token? [Y/n] "
-    read -r REQUIRE_AUTH
-    if [[ "$REQUIRE_AUTH" =~ ^[nN]$ ]]; then
-      AUTH_REQUIRED="false"
-      echo -e "   ${YELLOW}⚠️  Authentication disabled – API is open to anyone who can reach port ${HOST_PORT}.${NC}"
-      echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
-    else
-      AUTH_REQUIRED="true"
-      echo -e "   ${GREEN}✓${NC} Host access enabled at http://${HOST_BIND_ADDRESS}:${HOST_PORT}\n"
-    fi
-  fi
+      echo -e "   ${GREEN}✓${NC} Network access on 0.0.0.0:${HOST_PORT} (auth enforced)\n"
+      ;;
+    *)
+      ACCESS_MODE="host"
+      PUBLIC_URL="http://localhost:$_DEFAULT_PORT"
+      echo -n "🔐 Require bearer token? [Y/n] "
+      read -r REQUIRE_AUTH
+      if [[ "$REQUIRE_AUTH" =~ ^[nN]$ ]]; then
+        AUTH_REQUIRED="false"
+        echo -e "   ${YELLOW}⚠️  Authentication disabled – API is open to anyone who can reach port ${HOST_PORT}.${NC}"
+        echo -e "   ${YELLOW}   Only use this for local testing.${NC}\n"
+      else
+        AUTH_REQUIRED="true"
+        echo -e "   ${GREEN}✓${NC} Host access enabled at http://${HOST_BIND_ADDRESS}:${HOST_PORT}\n"
+      fi
+      ;;
+  esac
 
   [[ "$AUTH_REQUIRED" == "true" ]] && generated_token="$(openssl rand -hex 32)"
 
-  # 5. Docker network (optional)
+  # 5. Webhook callback URL (network + paperless only)
+  RAG_API_INTERNAL_URL="http://${_DEFAULT_RAG_API_SERVICE}:8080"
+  if _needs_paperless && [[ "$ACCESS_MODE" == "network" ]]; then
+    echo -e "   ${BLUE}ℹ️  Paperless needs a URL to reach rag-api for webhook callbacks.${NC}"
+    echo -e "      Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT})."
+    echo -n "🔗 Webhook callback URL: "
+    read -r RAG_API_INTERNAL_URL
+    while [[ -z "$RAG_API_INTERNAL_URL" ]]; do
+      echo -e "${RED}❌ This field is required in network mode.${NC}"
+      echo -n "🔗 Webhook callback URL: "
+      read -r RAG_API_INTERNAL_URL
+    done
+    echo -e "   ${GREEN}✓${NC} Webhook URL: $RAG_API_INTERNAL_URL\n"
+  fi
+
+  # 6. Docker network (optional)
   echo -n "🔗 External Docker network to join (leave empty for default 'rag-network'): "
   read -r DOCKER_NETWORK
   if [[ -n "$DOCKER_NETWORK" ]]; then
@@ -298,7 +328,7 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
-RAG_API_INTERNAL_URL=http://${_DEFAULT_RAG_API_SERVICE}:8080
+RAG_API_INTERNAL_URL=$RAG_API_INTERNAL_URL
 PAPERLESS_URL=$PAPERLESS_URL
 PAPERLESS_TOKEN=$PAPERLESS_TOKEN
 PAPERLESS_PUBLIC_URL=$PAPERLESS_PUBLIC_URL
@@ -340,12 +370,16 @@ if [[ -f .env ]]; then
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
       DOCKER_NETWORK="${DOCKER_NETWORK:-}"
-      if [[ "$ACCESS_MODE" == "host" ]]; then
-        PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
-        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
-      else
+      if [[ "$ACCESS_MODE" == "internal" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${_DEFAULT_RAG_API_SERVICE}:8080}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-false}"
+      elif [[ "$ACCESS_MODE" == "network" ]]; then
+        HOST_BIND_ADDRESS="0.0.0.0"
+        PUBLIC_URL="${PUBLIC_URL:-http://0.0.0.0:${HOST_PORT}}"
+        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
+      else
+        PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
+        AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
       fi
 
       # Mint a new token if auth is required but none exists yet

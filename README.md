@@ -103,15 +103,15 @@ graph LR
 
 ## Access Modes
 
-| Mode | Use case | Reachable from | Port | Auth |
-|---|---|---|:---:|:---:|
-| **Internal** | Other containers on the same Docker network (e.g. n8n) | `http://rag-api:8080` | — | optional |
-| **Host** | Browser, scripts, or apps on the host machine | `http://localhost:8484` | `8484` | recommended |
+| Mode | Use case | Reachable at | Bind | Auth |
+|---|---|---|---|:---:|
+| **Internal** | Other containers on the same Docker network (e.g. n8n) | `http://rag-api:8080` | no port published | optional |
+| **Host** | Apps on this machine only | `http://localhost:8484` | `127.0.0.1:8484` | recommended |
+| **Network** | Other machines / external Paperless | `http://<your-ip>:8484` | `0.0.0.0:8484` | enforced |
 
 > [!NOTE]
-> **Internal** = no port published on the host; only containers in the same Docker network can reach the API.
-> **Host** = port `8484` is published; anything on the machine (or network) can reach it.
-> Auth adds a bearer token to all data-bearing endpoints. Enabled by default in host mode.
+> **Network** mode binds to all interfaces and enforces authentication.
+> When combined with Paperless, setup asks for the webhook callback URL so Paperless can reach rag-api.
 
 ## n8n Integration
 
