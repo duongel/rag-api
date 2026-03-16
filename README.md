@@ -23,18 +23,23 @@ via a ready-to-use [skill](./SKILL.md). Runs entirely in Docker.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash
 ```
+The interactive setup asks for your vault path, Paperless API credentials, Ollama location, and access mode. 
 
-To install with only one data source:
+**Safe to re-run to update.**
 
+### To install with only one data source:
+
+#### Obsidian only
 ```bash
-# Obsidian only (no Paperless prompts)
 curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash -s -- --obsidian-only
+````
 
-# Paperless only (no vault path prompt)
+#### Paperless-ngx only
+```bash
 curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh | bash -s -- --paperless-only
 ```
 
-The interactive setup asks for your vault path, Paperless API credentials, Ollama location, and access mode. Safe to re-run for updates.
+
 
 <details>
 <summary>Manual install (development)</summary>
