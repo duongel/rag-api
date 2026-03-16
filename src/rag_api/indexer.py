@@ -351,8 +351,8 @@ class Indexer:
                 break
             page += 1
 
-        if not all_docs:
-            logger.warning("No documents returned from Paperless API")
+        if not all_docs and not fetch_complete:
+            logger.warning("No documents returned from Paperless API (fetch incomplete)")
             return 0
 
         logger.info("Fetched %d documents from Paperless API (%d pages)", len(all_docs), page)

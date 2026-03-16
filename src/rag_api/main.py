@@ -82,37 +82,37 @@ def _register_paperless_webhook():
         # List existing consumption templates / webhooks
         # Paperless-NGX ≥2.x uses /api/share_links/ or custom scripts,
         # but the post-consume webhook is configured via /api/workflows/
-        resp = requests.get(
-            f"{PAPERLESS_URL}/api/workflows/",
-            headers=headers,
-            timeout=10,
-        )
-        if not resp.ok:
-            logger.warning("Could not list Paperless workflows (HTTP %d) — skipping webhook registration", resp.status_code)
-            return
+        # Paginate through all workflow pages to avoid creating duplicates
+        url: str | None = f"{PAPERLESS_URL}/api/workflows/"
+        while url:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if not resp.ok:
+                logger.warning("Could not list Paperless workflows (HTTP %d) — skipping webhook registration", resp.status_code)
+                return
 
-        # Check if a workflow already points to our webhook URL
-        for wf in resp.json().get("results", []):
-            for action in wf.get("actions", []):
-                if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
-                    # Ensure headers (e.g. auth token) are up to date
-                    existing_headers = action.get("webhook", {}).get("headers", {})
-                    if existing_headers != webhook_headers:
-                        logger.info("Updating webhook headers for workflow %d", wf["id"])
-                        action["webhook"]["headers"] = webhook_headers
-                        update_resp = requests.put(
-                            f"{PAPERLESS_URL}/api/workflows/{wf['id']}/",
-                            json=wf,
-                            headers=headers,
-                            timeout=10,
-                        )
-                        if update_resp.ok:
-                            logger.info("Webhook headers updated successfully")
+            data = resp.json()
+            for wf in data.get("results", []):
+                for action in wf.get("actions", []):
+                    if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
+                        # Ensure headers (e.g. auth token) are up to date
+                        existing_headers = action.get("webhook", {}).get("headers", {})
+                        if existing_headers != webhook_headers:
+                            logger.info("Updating webhook headers for workflow %d", wf["id"])
+                            action["webhook"]["headers"] = webhook_headers
+                            update_resp = requests.put(
+                                f"{PAPERLESS_URL}/api/workflows/{wf['id']}/",
+                                json=wf,
+                                headers=headers,
+                                timeout=10,
+                            )
+                            if update_resp.ok:
+                                logger.info("Webhook headers updated successfully")
+                            else:
+                                logger.warning("Failed to update webhook headers (HTTP %d)", update_resp.status_code)
                         else:
-                            logger.warning("Failed to update webhook headers (HTTP %d)", update_resp.status_code)
-                    else:
-                        logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
-                    return
+                            logger.info("Paperless webhook already registered (workflow %d)", wf["id"])
+                        return
+            url = data.get("next")
 
         # Create a new workflow with webhook action
         workflow_data = {
