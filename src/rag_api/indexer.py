@@ -379,6 +379,7 @@ class Indexer:
 
         # Phase 2: index each document
         count = 0
+        indexed_file_paths: set[str] = set()
         for processed, doc in enumerate(all_docs, start=1):
             try:
                 # List responses may omit content; fetch individual doc details.
@@ -393,6 +394,9 @@ class Indexer:
                             doc = detail.json()
                     except Exception as e:
                         logger.warning("Failed to fetch detail for doc %s: %s", doc["id"], e)
+                # Track the file path that will actually be used for indexing
+                fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
+                indexed_file_paths.add(fp)
                 if self.index_paperless_doc(doc):
                     count += 1
             except Exception as e:
@@ -405,16 +409,11 @@ class Indexer:
         # Only run cleanup when all pages were fetched successfully;
         # a partial fetch would incorrectly delete still-existing docs.
         if fetch_complete:
-            api_file_paths = set()
-            for doc in all_docs:
-                fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
-                api_file_paths.add(fp)
-
             for doc_key in list(self._file_hashes):
                 if self._file_sources.get(doc_key, "obsidian") != "paperless":
                     continue
                 fp = self._file_path_from_key(doc_key)
-                if fp not in api_file_paths:
+                if fp not in indexed_file_paths:
                     self.remove_file(fp, source="paperless")
                     logger.info("Removed deleted paperless doc from index: %s", fp)
         else:
