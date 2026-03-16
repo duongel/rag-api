@@ -282,7 +282,7 @@ _run_setup() {
       echo -e "   ${GREEN}✓${NC} Network access on 0.0.0.0:${HOST_PORT} (auth enforced)\n"
       echo -e "   ${BLUE}ℹ️  Public URL${NC}: Used in API docs and search result links."
       echo -e "      Enter the URL that clients will use to reach this API."
-      echo -n "🌐 Public URL (e.g. http://192.168.1.50:${_DEFAULT_PORT}): "
+      echo -n "🌐 Public URL (e.g. http://192.168.1.50:${_DEFAULT_PORT} or http://myhost.local:${_DEFAULT_PORT}): "
       read -r PUBLIC_URL
       while [[ -z "$PUBLIC_URL" ]]; do
         echo -e "${RED}❌ This field is required in network mode.${NC}"
@@ -387,7 +387,7 @@ if [[ -f .env ]]; then
         HOST_BIND_ADDRESS="0.0.0.0"
         if [[ -z "${PUBLIC_URL:-}" || "$PUBLIC_URL" == http://0.0.0.0* ]]; then
           echo -e "${YELLOW}⚠️  Network mode requires a routable public URL for API docs and links.${NC}"
-          echo -n "🌐 Public URL (e.g. http://192.168.1.50:${HOST_PORT}): "
+          echo -n "🌐 Public URL (e.g. http://192.168.1.50:${HOST_PORT} or http://myhost.local:${HOST_PORT}): "
           read -r PUBLIC_URL
           while [[ -z "$PUBLIC_URL" ]]; do
             echo -e "${RED}❌ This field is required in network mode.${NC}"
