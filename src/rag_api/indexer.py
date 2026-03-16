@@ -345,8 +345,8 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
     Uses a two-pass strategy: first tries an exact full-path match against
     ``archive_filename``, then falls back to basename-only if no full-path
     match was found *and* the basename is unambiguous (exactly one hit).
-    Paginates through all API results to guarantee the correct document
-    is found even when many files share the same basename.
+    Paginates through results but stops early once an exact match is found
+    or ambiguity (2+ basename hits) is detected.
     """
     import requests
 
@@ -361,7 +361,7 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
         if resp.ok:
             return resp.json()
 
-    # Slow path: search by archive filename, paginate until exhausted
+    # Slow path: search by archive filename with pagination
     filename = Path(file_path).name
     basename_matches: list[dict] = []
     page = 1
@@ -382,9 +382,12 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
             # Exact full-path match — always preferred
             if archive_fn == file_path:
                 return doc
-            # Collect all basename matches to check uniqueness later
+            # Collect basename matches to check uniqueness
             if Path(archive_fn).name == filename:
                 basename_matches.append(doc)
+                # Two or more basename matches → ambiguous, stop early
+                if len(basename_matches) > 1:
+                    return None
 
         if not data.get("next"):
             break
