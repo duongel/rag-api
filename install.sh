@@ -12,8 +12,20 @@ command -v curl   >/dev/null 2>&1 || { echo -e "${RED}❌ curl is required but n
 command -v docker >/dev/null 2>&1 || { echo -e "${RED}❌ Docker not found.${NC}" >&2; exit 1; }
 docker info       >/dev/null 2>&1 || { echo -e "${RED}❌ Docker is not running.${NC}" >&2; exit 1; }
 
-# Re-attach stdin to the terminal so interactive prompts work when piped through bash
-exec < /dev/tty
+# Re-attach stdin to the terminal so interactive prompts work when piped through bash.
+# Without a controlling TTY (for example `ssh host 'curl ... | bash'`), `exec < /dev/tty`
+# aborts silently because `set -e` exits on the failed redirection.
+if [[ ! -t 0 ]]; then
+  if [[ -r /dev/tty ]]; then
+    exec < /dev/tty
+  else
+    echo -e "${RED}❌ Interactive terminal required for setup, but no TTY is attached.${NC}" >&2
+    echo -e "${YELLOW}   Run this inside an interactive SSH session, then execute:${NC}" >&2
+    echo -e "   ${BOLD}curl -fsSL ${BASE}/install.sh | bash${NC}" >&2
+    echo -e "${YELLOW}   If you connected with ssh, force a TTY with:${NC} ${BOLD}ssh -t <host>${NC}" >&2
+    exit 1
+  fi
+fi
 
 if [[ -d "$INSTALL_DIR" ]]; then
   if [[ -f "$INSTALL_DIR/start.sh" && -f "$INSTALL_DIR/docker-compose.yml" ]]; then
