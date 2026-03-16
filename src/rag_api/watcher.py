@@ -1,4 +1,4 @@
-"""File watcher for the Obsidian vault and the Paperless archive directory.
+"""File watcher for the Obsidian vault.
 
 Observer selection (in priority order):
   1. WATCHER_POLLING=true  → PollingObserver  (forced; use for Docker Desktop on macOS)
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
 
-from .config import VAULT_PATH, PAPERLESS_ARCHIVE_PATH, POLL_INTERVAL, WATCHER_POLLING
+from .config import VAULT_PATH, POLL_INTERVAL, WATCHER_POLLING
 from .indexer import Indexer
 
 logger = logging.getLogger(__name__)
@@ -156,49 +156,13 @@ class _ObsidianHandler(_DebouncedHandler):
 
 
 # ---------------------------------------------------------------------------
-# Paperless archive handler
-# ---------------------------------------------------------------------------
-
-class _PaperlessHandler(_DebouncedHandler):
-    """Watches the Paperless archive/ directory for PDF changes.
-
-    Uses inotify on Linux so indexing is triggered immediately when Paperless
-    writes a new or updated archive PDF – no polling delay.
-    """
-
-    @staticmethod
-    def _should_ignore(rel_path: str) -> bool:
-        filename = Path(rel_path).name
-        if filename.startswith(".") or filename.startswith("~"):
-            return True
-        return not filename.lower().endswith(".pdf")
-
-    def _rel_path(self, src_path: str) -> str | None:
-        try:
-            return str(Path(src_path).relative_to(PAPERLESS_ARCHIVE_PATH))
-        except ValueError:
-            return None
-
-    def _process(self, rel_path: str, deleted: bool):
-        try:
-            if deleted:
-                self.indexer.remove_file(rel_path, source="paperless")
-                logger.info("Removed paperless doc from index: %s", rel_path)
-            else:
-                self.indexer.index_file(rel_path, base_path=PAPERLESS_ARCHIVE_PATH, source="paperless")
-        except Exception as e:
-            logger.error("Error processing paperless %s: %s", rel_path, e)
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def start_watcher(indexer: Indexer, watch_obsidian: bool = True, watch_paperless: bool = True):
-    """Start file watchers for vault and/or Paperless archive.
+def start_watcher(indexer: Indexer, watch_obsidian: bool = True):
+    """Start file watcher for the Obsidian vault.
 
     Returns the started observer (call ``.stop()`` to shut down).
-    At least one watched path must exist; logs a warning otherwise.
     """
     observer = _make_observer()
     watching_any = False
@@ -211,15 +175,6 @@ def start_watcher(indexer: Indexer, watch_obsidian: bool = True, watch_paperless
             watching_any = True
         else:
             logger.warning("Vault path does not exist, skipping watcher: %s", vault_path)
-
-    if watch_paperless and PAPERLESS_ARCHIVE_PATH:
-        archive_path = Path(PAPERLESS_ARCHIVE_PATH)
-        if archive_path.exists():
-            observer.schedule(_PaperlessHandler(indexer), str(archive_path), recursive=True)
-            logger.info("Watching Paperless archive for changes: %s", archive_path)
-            watching_any = True
-        else:
-            logger.warning("Paperless archive path does not exist, skipping: %s", archive_path)
 
     if not watching_any:
         logger.warning("No watchable paths found – file watcher inactive.")

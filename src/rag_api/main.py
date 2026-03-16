@@ -12,7 +12,7 @@ import uvicorn
 from .config import (
     OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN,
     OLLAMA_TIMEOUT_SECONDS,
-    DATA_SOURCES, PAPERLESS_ARCHIVE_PATH, VAULT_PATH,
+    DATA_SOURCES, VAULT_PATH,
     PAPERLESS_URL, PAPERLESS_TOKEN, RAG_API_INTERNAL_URL,
 )
 from .indexer import Indexer
@@ -215,7 +215,6 @@ def main():
     observer = start_watcher(
         indexer,
         watch_obsidian=_INDEX_OBSIDIAN,
-        watch_paperless=False,
     )
 
     logger.info("Starting API server on port %d …", API_PORT)

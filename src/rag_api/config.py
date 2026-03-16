@@ -13,13 +13,8 @@ AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true",
 DATA_SOURCES = os.environ.get("DATA_SOURCES", "all")
 
 # Paperless-NGX integration (optional).
-# Two modes:
-#   1. API-only (recommended): set PAPERLESS_URL + PAPERLESS_TOKEN.
-#      All documents are fetched via the REST API — no archive mount needed.
-#   2. Legacy: set PAPERLESS_ARCHIVE_PATH to a bind-mounted copy of the
-#      Paperless archive/ directory.  API enrichment is still used when
-#      PAPERLESS_URL + PAPERLESS_TOKEN are configured.
-PAPERLESS_ARCHIVE_PATH = os.environ.get("PAPERLESS_ARCHIVE_PATH", "")
+# Set PAPERLESS_URL + PAPERLESS_TOKEN to enable.
+# All documents are fetched via the REST API.
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
 PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
 PAPERLESS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "")

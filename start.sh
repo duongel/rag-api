@@ -87,9 +87,6 @@ _compose() {
   local files=(-f docker-compose.yml)
   [[ "${DATA_SOURCES:-all}" != "paperless" ]] && files+=(-f docker-compose.obsidian.yml)
   [[ "${ACCESS_MODE:-host}" == "host" ]] && files+=(-f docker-compose.host.yml)
-  if [[ "${DATA_SOURCES:-all}" != "obsidian" ]] && [[ -n "${PAPERLESS_ARCHIVE_PATH:-}" ]] && [[ -d "${PAPERLESS_ARCHIVE_PATH}" ]]; then
-    files+=(-f docker-compose.paperless.yml)
-  fi
   docker compose "${files[@]}" "$@"
 }
 
@@ -170,26 +167,6 @@ _prompt_paperless_api() {
   echo -e "   ${GREEN}✓${NC} Paperless API: $PAPERLESS_URL\n"
 }
 
-_prompt_paperless_archive_path() {
-  # Sets PAPERLESS_ARCHIVE_PATH; empty string means the user chose to skip (recommended).
-  echo -e "   ${BLUE}ℹ️  Legacy option${NC}: Mount the Paperless archive/ directory for direct PDF access."
-  echo -e "      This is ${YELLOW}not required${NC} – indexing works fully via the Paperless API."
-  printf "📂 Path to Paperless archive/ directory ${BLUE}(leave empty to skip – recommended)${NC}: "
-  read -r PAPERLESS_ARCHIVE_PATH
-  PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH/#\~/$HOME}"
-  if [[ -z "$PAPERLESS_ARCHIVE_PATH" ]]; then
-    echo -e "   ${GREEN}✓${NC} API-only mode (no archive mount)\n"
-    return 0
-  fi
-  if [[ -d "$PAPERLESS_ARCHIVE_PATH" ]]; then
-    PAPERLESS_ARCHIVE_PATH="$(cd "$PAPERLESS_ARCHIVE_PATH" && pwd)"
-    echo -e "   ${GREEN}✓${NC} $PAPERLESS_ARCHIVE_PATH\n"
-    return 0
-  fi
-  echo -e "${YELLOW}⚠️  Directory not found: $PAPERLESS_ARCHIVE_PATH – skipping archive mount.${NC}\n"
-  PAPERLESS_ARCHIVE_PATH=""
-}
-
 # ── Argument parsing ──────────────────────────────────────────────────────
 DATA_SOURCES="all"
 for arg in "$@"; do
@@ -211,7 +188,7 @@ echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
 _run_setup() {
   local generated_token=""
   local ollama_service_name=""
-  PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL="" PAPERLESS_ARCHIVE_PATH=""
+  PAPERLESS_URL="" PAPERLESS_TOKEN="" PAPERLESS_PUBLIC_URL=""
 
   # 1. Vault path – only when indexing Obsidian
   if [[ "$DATA_SOURCES" != "paperless" ]]; then
@@ -223,7 +200,6 @@ _run_setup() {
   # 2. Paperless config – only when indexing Paperless
   if [[ "$DATA_SOURCES" != "obsidian" ]]; then
     _prompt_paperless_api
-    _prompt_paperless_archive_path
   fi
 
   # 3. Ollama – local or external?
@@ -305,7 +281,6 @@ PUBLIC_URL=$PUBLIC_URL
 AUTH_REQUIRED=$AUTH_REQUIRED
 API_BEARER_TOKEN=$generated_token
 DOCKER_NETWORK=$DOCKER_NETWORK
-PAPERLESS_ARCHIVE_PATH=$PAPERLESS_ARCHIVE_PATH
 PAPERLESS_URL=$PAPERLESS_URL
 PAPERLESS_TOKEN=$PAPERLESS_TOKEN
 PAPERLESS_PUBLIC_URL=$PAPERLESS_PUBLIC_URL
@@ -353,7 +328,6 @@ if [[ -f .env ]]; then
       HOST_BIND_ADDRESS="${HOST_BIND_ADDRESS:-$_DEFAULT_BIND}"
       HOST_PORT="${HOST_PORT:-$_DEFAULT_PORT}"
       DOCKER_NETWORK="${DOCKER_NETWORK:-}"
-      PAPERLESS_ARCHIVE_PATH="${PAPERLESS_ARCHIVE_PATH:-}"
       if [[ "$ACCESS_MODE" == "host" ]]; then
         PUBLIC_URL="${PUBLIC_URL:-http://${HOST_BIND_ADDRESS}:${HOST_PORT}}"
         AUTH_REQUIRED="${AUTH_REQUIRED:-true}"
