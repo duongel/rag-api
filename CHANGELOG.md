@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/duongel/rag-api/compare/v1.4.2...v1.4.3) (2026-03-16)
+
+
+### Bug Fixes
+
+* remove POST /note references (belongs to separate PR) ([51a5a0b](https://github.com/duongel/rag-api/commit/51a5a0baef6e69185e1f2fcab91b8e025ae2d7b1))
+
 ## [1.4.2](https://github.com/duongel/rag-api/compare/v1.4.1...v1.4.2) (2026-03-16)
 
 
