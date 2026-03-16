@@ -353,3 +353,34 @@ def parse_pdf(file_path: str, vault_path: str) -> list[Chunk]:
     logger.debug("parse_pdf %s → %d chunks", file_path, len(chunks))
     return chunks
 
+
+def parse_plaintext(file_path: str, content: str) -> list[Chunk]:
+    """Chunk pre-extracted plain text (e.g. from Paperless API).
+
+    Uses the same recursive splitting strategy as ``parse_markdown`` but
+    without Markdown-specific processing (frontmatter, wikilinks, headers).
+    """
+    if not content or not content.strip():
+        return []
+
+    stem = Path(file_path).stem
+    content = content.strip()
+
+    if len(content) < CHUNK_MIN_LENGTH:
+        if len(content) < CHUNK_DISCARD_LENGTH:
+            return []
+        return [_make_chunk(file_path, stem, content)]
+
+    chunks: list[Chunk] = []
+    for piece in _recursive_split(content, MAX_CHUNK_SIZE):
+        piece = piece.strip()
+        if len(piece) < CHUNK_DISCARD_LENGTH:
+            continue
+        chunks.append(_make_chunk(file_path, stem, piece))
+
+    if not chunks and len(content) >= CHUNK_DISCARD_LENGTH:
+        chunks.append(_make_chunk(file_path, stem, content))
+
+    logger.debug("parse_plaintext %s → %d chunks", file_path, len(chunks))
+    return chunks
+

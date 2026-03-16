@@ -60,7 +60,7 @@ _summary() {
 _bar_str() {
   local cur=$1 tot=$2 w=30
   if [ "$tot" -le 0 ]; then
-    printf '⏳ %d files indexed...' "$cur"; return
+    printf '⏳ waiting...'; return
   fi
   local pct=$(( cur * 100 / tot ))
   local f=$(( cur * w / tot ))
