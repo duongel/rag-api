@@ -340,7 +340,12 @@ def _paperless_api_data(file_path: str) -> dict:
 
 
 def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
-    """Fetch a single Paperless document, looking up by ID or archive filename."""
+    """Fetch a single Paperless document, looking up by ID or archive filename.
+
+    The comparison uses the full ``archive_filename`` (including any
+    subdirectory component) so that files in different directories with
+    the same basename are not confused.
+    """
     import requests
 
     stem = Path(file_path).stem
@@ -354,7 +359,7 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
         if resp.ok:
             return resp.json()
 
-    # Slow path: search by archive filename
+    # Slow path: search by archive filename and verify full path match
     filename = Path(file_path).name
     resp = requests.get(
         f"{base_url}/api/documents/",
@@ -364,7 +369,10 @@ def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> d
     )
     if resp.ok:
         for doc in resp.json().get("results", []):
-            if Path(doc.get("archive_filename", "")).name == filename:
+            archive_fn = doc.get("archive_filename", "")
+            # Compare full relative path first (handles subdirectories),
+            # fall back to basename-only for flat archive layouts.
+            if archive_fn == file_path or Path(archive_fn).name == filename:
                 return doc
 
     return None
