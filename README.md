@@ -47,6 +47,21 @@ docker pull ghcr.io/duongel/rag-api:latest
 
 </details>
 
+## Agent Integration
+
+[`SKILL.md`](./SKILL.md) contains endpoint documentation, curl examples, and copy-paste tool definitions for all major providers. Serve it as context to any LLM agent — no MCP server required.
+
+| Provider | Format | Where to use |
+|---|---|---|
+| **OpenAI** | `functions` / `tools` array | ChatGPT, GPT-4o, Assistants API, Azure OpenAI |
+| **Anthropic** | `tools` with `input_schema` | Claude, Claude Code, Amazon Bedrock |
+| **Google** | `function_declarations` | Gemini, Vertex AI |
+| **Compatible** | OpenAI format | Mistral, Groq, Ollama, Together AI, DeepSeek, Fireworks, Perplexity |
+
+**How it works:** Copy the tool definition for your provider from [`SKILL.md`](./SKILL.md) into your agent's tool/function list. The agent calls rag-api over HTTP to search your vault and Paperless documents. Works with any framework that supports HTTP tool calls (LangChain, CrewAI, n8n, custom agents).
+
+**Simplest approach:** Pass the full [`SKILL.md`](./SKILL.md) as system context — the agent discovers the endpoints and calls them directly.
+
 ## Architecture
 
 ```mermaid
@@ -69,10 +84,6 @@ graph LR
 - Obsidian files are watched via inotify and indexed on change
 - Paperless documents are fetched via REST API; a webhook is auto-registered for real-time updates
 - All data-bearing endpoints require a bearer token by default
-
-## Agent Integration
-
-[`SKILL.md`](./SKILL.md) documents every endpoint with curl examples and ready-to-use tool definitions (OpenAI / Anthropic). Pass it as context to any LLM agent — no MCP required.
 
 ## Access Modes
 
