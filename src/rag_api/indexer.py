@@ -207,6 +207,7 @@ class Indexer:
             pass
         self._file_hashes.pop(doc_key, None)
         self._file_sources.pop(doc_key, None)
+        self._api_content_hashes.pop(doc_key, None)
         if source == "obsidian":
             self.link_graph.remove(file_path)
 
