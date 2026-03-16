@@ -13,13 +13,20 @@ AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true",
 DATA_SOURCES = os.environ.get("DATA_SOURCES", "all")
 
 # Paperless-NGX integration (optional).
-# Set PAPERLESS_ARCHIVE_PATH to a bind-mounted copy of the Paperless archive/ directory.
-# If PAPERLESS_URL + PAPERLESS_TOKEN are also set, document titles and tags are fetched
-# from the REST API and stored as metadata alongside the indexed text.
+# Two modes:
+#   1. API-only (recommended): set PAPERLESS_URL + PAPERLESS_TOKEN.
+#      All documents are fetched via the REST API — no archive mount needed.
+#   2. Legacy: set PAPERLESS_ARCHIVE_PATH to a bind-mounted copy of the
+#      Paperless archive/ directory.  API enrichment is still used when
+#      PAPERLESS_URL + PAPERLESS_TOKEN are configured.
 PAPERLESS_ARCHIVE_PATH = os.environ.get("PAPERLESS_ARCHIVE_PATH", "")
 PAPERLESS_URL = os.environ.get("PAPERLESS_URL", "")
 PAPERLESS_TOKEN = os.environ.get("PAPERLESS_TOKEN", "")
 PAPERLESS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "")
+
+# Internal URL that Paperless uses to reach rag-api for webhook callbacks.
+# Defaults to http://rag-api:8080 (Docker-internal).
+RAG_API_INTERNAL_URL = os.environ.get("RAG_API_INTERNAL_URL", "http://rag-api:8080")
 
 # Minimum content length (chars) before splitting into chunks.
 # Shorter files are indexed as a single chunk.
