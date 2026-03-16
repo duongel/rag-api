@@ -30,6 +30,8 @@ class Indexer:
         # Tracks API content hashes separately for Paperless documents
         self._api_content_hashes: dict[str, str] = {}
         self.link_graph = LinkGraph()
+        # Pre-fetched Paperless document cache (populated during full_reindex)
+        self._paperless_cache: dict[str, dict] | None = None
         self._load_file_hashes()
 
     @staticmethod
@@ -102,14 +104,20 @@ class Indexer:
         api_data: dict = {}
         api_content_hash = ""
         if source == "paperless":
-            api_data = _paperless_api_data(file_path)
+            stored_file_hash = self._file_hashes.get(doc_key)
+
+            # Fast path: file unchanged and previously indexed with API data
+            if stored_file_hash == file_hash and doc_key in self._api_content_hashes:
+                return False
+
+            api_data = _paperless_api_data(file_path, cache=self._paperless_cache)
             api_content = api_data.get("content", "")
             if api_content:
                 api_content_hash = hashlib.sha256(api_content.encode()).hexdigest()
 
-            stored_file_hash = self._file_hashes.get(doc_key)
             if stored_file_hash == file_hash:
-                # PDF bytes unchanged
+                # PDF bytes unchanged, but no api_content_hash stored yet
+                # (upgrade from pre-API version)
                 if not api_content:
                     # API unavailable — can't detect content edits, keep existing index
                     return False
@@ -228,6 +236,10 @@ class Indexer:
             )
             return 0
 
+        # Pre-fetch all Paperless documents to avoid N+1 API calls
+        if source == "paperless":
+            self._paperless_cache = _build_paperless_cache()
+
         def _is_hidden(rel: Path) -> bool:
             return any(p.startswith(".") for p in rel.parts)
 
@@ -266,6 +278,7 @@ class Indexer:
                 on_progress(processed, total)
 
         self._cleanup_deleted(source=source, base_path=str(root))
+        self._paperless_cache = None
         logger.info("Full reindex [%s] complete – %d files updated.", source, count)
         return count
 
@@ -295,7 +308,48 @@ class Indexer:
 # Optional Paperless API metadata enrichment
 # ---------------------------------------------------------------------------
 
-def _paperless_api_data(file_path: str) -> dict:
+def _build_paperless_cache() -> dict[str, dict]:
+    """Pre-fetch all Paperless documents into a ``{archive_filename: doc}`` lookup.
+
+    Called once at the start of ``full_reindex`` to replace 3000+ individual
+    API calls with ~40 paginated requests.  Returns ``{}`` when the Paperless
+    API is not configured or unreachable.
+    """
+    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+        return {}
+
+    import requests
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+    cache: dict[str, dict] = {}
+    page = 1
+
+    while True:
+        try:
+            resp = requests.get(
+                f"{PAPERLESS_URL}/api/documents/",
+                params={"page": page, "page_size": 100},
+                headers=headers,
+                timeout=30,
+            )
+        except Exception:
+            break
+        if not resp.ok:
+            break
+        data = resp.json()
+        for doc in data.get("results", []):
+            fn = doc.get("archive_filename")
+            if fn:
+                cache[fn] = doc
+        if not data.get("next"):
+            break
+        page += 1
+
+    logger.info("Pre-fetched %d Paperless documents for cache", len(cache))
+    return cache
+
+
+def _paperless_api_data(file_path: str, cache: dict[str, dict] | None = None) -> dict:
     """Fetch document content and metadata from the Paperless REST API.
 
     Called only when PAPERLESS_URL and PAPERLESS_TOKEN are configured.
@@ -313,7 +367,7 @@ def _paperless_api_data(file_path: str) -> dict:
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
 
     try:
-        data = _fetch_paperless_document(file_path, PAPERLESS_URL, headers)
+        data = _fetch_paperless_document(file_path, PAPERLESS_URL, headers, cache=cache)
         if not data:
             return {}
 
@@ -339,15 +393,29 @@ def _paperless_api_data(file_path: str) -> dict:
         return {}
 
 
-def _fetch_paperless_document(file_path: str, base_url: str, headers: dict) -> dict | None:
+def _fetch_paperless_document(
+    file_path: str, base_url: str, headers: dict, cache: dict[str, dict] | None = None,
+) -> dict | None:
     """Fetch a single Paperless document, looking up by ID or archive filename.
+
+    When *cache* is provided (during ``full_reindex``), performs an O(1)
+    dict lookup instead of an HTTP request.
 
     Uses a two-pass strategy: first tries an exact full-path match against
     ``archive_filename``, then falls back to basename-only if no full-path
     match was found *and* the basename is unambiguous (exactly one hit).
-    Paginates through results but stops early once an exact match is found
-    or ambiguity (2+ basename hits) is detected.
     """
+    # ---- cached path (full_reindex) ----
+    if cache is not None:
+        if file_path in cache:
+            return cache[file_path]
+        filename = Path(file_path).name
+        basename_matches = [doc for fn, doc in cache.items() if Path(fn).name == filename]
+        if len(basename_matches) == 1:
+            return basename_matches[0]
+        return None
+
+    # ---- uncached path (watcher / individual calls) ----
     import requests
 
     stem = Path(file_path).stem
