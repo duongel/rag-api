@@ -116,7 +116,7 @@ Recommended HTTP mapping:
 |---|---|
 | `search_notes` | `POST /search` |
 | `keyword_search_notes` | `POST /keyword-search` |
-| `get_note` | `GET /note?path=...` or `POST /note` with `{"path": "..."}` |
+| `get_note` | `GET /note?path=...` |
 
 Every mapping above also requires `Authorization: Bearer <API_BEARER_TOKEN>`.
 
@@ -383,18 +383,11 @@ curl -s http://localhost:8484/keyword-search \
 
 ### 3. Retrieve a Note
 
-Returns the full Markdown content of a single note. Supports both GET (query parameter) and POST (JSON body).
+Returns the full Markdown content of a single note.
 
 ```bash
-# GET variant
 curl -s "http://localhost:8484/note?path=Home/Heating/Heatpump.md" \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
-
-# POST variant (useful when all endpoints must use the same HTTP method)
-curl -s http://localhost:8484/note \
-  -H "Authorization: Bearer $API_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "Home/Heating/Heatpump.md"}'
 ```
 
 ### 4. Trigger Reindex
