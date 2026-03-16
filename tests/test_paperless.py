@@ -239,3 +239,43 @@ class TestPaperlessWebhook:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "unchanged"
+
+
+# ===========================================================================
+# get_note for Paperless documents (retrieved from ChromaDB)
+# ===========================================================================
+
+class TestGetNotePaperless:
+    @pytest.fixture(autouse=True)
+    def _setup(self, indexer):
+        with patch("rag_api.search.embed_query", side_effect=lambda q: [0.0] * EMBED_DIM):
+            from rag_api.search import Searcher
+            self.indexer = indexer
+            self.searcher = Searcher(indexer)
+
+    def test_paperless_doc_found_by_archive_filename(self):
+        doc = _make_doc(50, content="Hello from Paperless", archive_filename="vertrag/test.pdf")
+        self.indexer.index_paperless_doc(doc)
+        result = self.searcher.get_note("vertrag/test.pdf")
+        assert result is not None
+        assert result["file_path"] == "vertrag/test.pdf"
+        assert "Hello from Paperless" in result["content"]
+        assert result["source"] == "paperless"
+
+    def test_paperless_doc_found_by_synthetic_path(self):
+        doc = _make_doc(77, content="Synthetic path doc")
+        self.indexer.index_paperless_doc(doc)
+        result = self.searcher.get_note("paperless/77.pdf")
+        assert result is not None
+        assert "Synthetic path doc" in result["content"]
+
+    def test_paperless_doc_not_found(self):
+        result = self.searcher.get_note("nonexistent/path.pdf")
+        assert result is None
+
+    def test_paperless_doc_includes_doc_id(self):
+        doc = _make_doc(99, content="Doc with ID", archive_filename="invoices/inv.pdf")
+        self.indexer.index_paperless_doc(doc)
+        result = self.searcher.get_note("invoices/inv.pdf")
+        assert result is not None
+        assert result["paperless_doc_id"] == "99"
