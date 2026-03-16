@@ -1,3 +1,11 @@
+## [1.7.1](https://github.com/duongel/rag-api/compare/v1.7.0...v1.7.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* prompt for routable PUBLIC_URL in network mode ([e70663c](https://github.com/duongel/rag-api/commit/e70663c72812b462d0d4d59be448f71c97dfb594))
+* show domain example in PUBLIC_URL prompt ([021f314](https://github.com/duongel/rag-api/commit/021f314163d2de447dd940320f17f6b088f7f6a6))
+
 # [1.7.0](https://github.com/duongel/rag-api/compare/v1.6.1...v1.7.0) (2026-03-16)
 
 
