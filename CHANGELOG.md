@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/duongel/rag-api/compare/v1.7.1...v1.7.2) (2026-03-16)
+
+
+### Bug Fixes
+
+* get_note returns Paperless docs from ChromaDB index ([4bd2218](https://github.com/duongel/rag-api/commit/4bd2218d7367ad40fb218919e2e7efed9c5dae7e))
+
 ## [1.7.1](https://github.com/duongel/rag-api/compare/v1.7.0...v1.7.1) (2026-03-16)
 
 
