@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Security, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -289,6 +289,13 @@ def paperless_webhook(payload: PaperlessWebhookPayload, _: None = Security(requi
         return {"status": "removed", "document_id": doc_id}
 
     # added / updated / unknown → (re-)index
-    updated = indexer.reindex_paperless_doc(doc_id)
+    try:
+        updated = indexer.reindex_paperless_doc(doc_id)
+    except Exception:
+        logger.exception("Webhook: failed to reindex paperless doc %d", doc_id)
+        return JSONResponse(
+            status_code=502,
+            content={"status": "error", "document_id": doc_id},
+        )
     logger.info("Webhook: %s paperless doc %d (updated=%s)", action or "reindex", doc_id, updated)
     return {"status": "indexed" if updated else "unchanged", "document_id": doc_id}
