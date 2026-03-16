@@ -25,7 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/duongel/rag-api/master/install.sh |
 ```
 The interactive setup asks for your vault path, Paperless API credentials, Ollama location, and access mode. 
 
-**Safe to re-run to update.**
+> [!TIP]
+> Safe to re-run to update.
 
 ### To install with only one data source:
 
