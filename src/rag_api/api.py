@@ -274,7 +274,7 @@ class PaperlessWebhookPayload(BaseModel):
 
 
 @app.post("/webhook/paperless", summary="Paperless document webhook", include_in_schema=False)
-def paperless_webhook(payload: PaperlessWebhookPayload, _: None = Security(require_auth)):
+def paperless_webhook(payload: PaperlessWebhookPayload):
     """Receives notifications from Paperless when documents change.
 
     The webhook is auto-registered at startup so no manual configuration
