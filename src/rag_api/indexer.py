@@ -125,7 +125,7 @@ class Indexer:
                 content = api_data.get("content")
                 if content:
                     chunks = parse_plaintext(file_path, content)
-            if chunks is None:
+            if not chunks:
                 chunks = parse_pdf(file_path, resolved_base)
 
         if not chunks:
