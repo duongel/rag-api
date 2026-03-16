@@ -15,7 +15,7 @@ Self-hosted RAG system for an Obsidian vault and Paperless-NGX. Runs entirely in
 │   (Python/FastAPI) │     │   (nomic-embed-text) │
 │   + ChromaDB       │     │   GPU (optional)     │
 │   + File Watcher   │     └──────────────────────┘
-│                    │◄── /obsidian (read-only mount)
+│                    │◄── /vault (read-only mount)
 └────────────────────┘
         │
    rag-network (or any external Docker network)
