@@ -156,8 +156,10 @@ class Indexer:
 
         content = (doc.get("content") or "").strip()
         if not content:
-            # Remove stale index entries if content was cleared (e.g. failed OCR)
-            self._remove_all_paths_for_paperless_doc(doc_id)
+            # Only remove if the payload actually included a content field;
+            # list responses may omit content entirely.
+            if "content" in doc:
+                self._remove_all_paths_for_paperless_doc(doc_id)
             return False
 
         # Use archive_filename as file_path when available, otherwise synthesize
