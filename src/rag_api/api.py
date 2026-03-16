@@ -94,6 +94,10 @@ class NoteResponse(BaseModel):
     content: str
 
 
+class NoteRequest(BaseModel):
+    path: str
+
+
 class StatsResponse(BaseModel):
     total_chunks: int
     total_files: int
@@ -223,6 +227,20 @@ def get_note(
     result = searcher.get_note(path)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Note not found: {path}")
+    return result
+
+
+@app.post(
+    "/note",
+    response_model=NoteResponse,
+    summary="Get full note (POST)",
+    description="Same as GET /note but accepts the path in a JSON body. Useful for clients that use POST for all endpoints.",
+)
+def post_note(req: NoteRequest, _: None = Security(require_auth)):
+    """Return the full Markdown content of a single note (POST variant)."""
+    result = searcher.get_note(req.path)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Note not found: {req.path}")
     return result
 
 

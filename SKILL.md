@@ -116,7 +116,7 @@ Recommended HTTP mapping:
 |---|---|
 | `search_notes` | `POST /search` |
 | `keyword_search_notes` | `POST /keyword-search` |
-| `get_note` | `GET /note?path=...` |
+| `get_note` | `GET /note?path=...` or `POST /note` |
 
 Every mapping above also requires `Authorization: Bearer <API_BEARER_TOKEN>`.
 
@@ -388,6 +388,15 @@ Returns the full Markdown content of a single note.
 ```bash
 curl -s "http://localhost:8484/note?path=Home/Heating/Heatpump.md" \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
+```
+
+**POST variant** (for agents that use POST for all endpoints, e.g. n8n HTTP Request Tool):
+
+```bash
+curl -s http://localhost:8484/note \
+  -H "Authorization: Bearer $API_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "Home/Heating/Heatpump.md"}'
 ```
 
 ### 4. Trigger Reindex
