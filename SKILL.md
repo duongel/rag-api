@@ -116,7 +116,7 @@ Recommended HTTP mapping:
 |---|---|
 | `search_notes` | `POST /search` |
 | `keyword_search_notes` | `POST /keyword-search` |
-| `get_note` | `GET /note?path=...` |
+| `get_note` | `GET /note?path=...` or `POST /note` with `{"path": "..."}` |
 
 Every mapping above also requires `Authorization: Bearer <API_BEARER_TOKEN>`.
 
@@ -171,45 +171,47 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
 This format is for Google Gemini setups using `function_declarations`.
 
 ```json
-[
-  {
-    "name": "search_notes",
-    "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": { "type": "string", "description": "Natural-language search query." },
-        "top_k": { "type": "integer", "description": "Maximum number of results." },
-        "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags." },
-        "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." }
-      },
-      "required": ["query"]
+{
+  "function_declarations": [
+    {
+      "name": "search_notes",
+      "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Natural-language search query." },
+          "top_k": { "type": "integer", "description": "Maximum number of results." },
+          "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags." },
+          "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "keyword_search_notes",
+      "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Exact search string." },
+          "top_k": { "type": "integer", "description": "Maximum number of results." }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "get_note",
+      "description": "Fetch the full Markdown content of one note by relative path.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Relative note path, e.g. Projects/Home/Heating.md" }
+        },
+        "required": ["path"]
+      }
     }
-  },
-  {
-    "name": "keyword_search_notes",
-    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "query": { "type": "string", "description": "Exact search string." },
-        "top_k": { "type": "integer", "description": "Maximum number of results." }
-      },
-      "required": ["query"]
-    }
-  },
-  {
-    "name": "get_note",
-    "description": "Fetch the full Markdown content of one note by relative path.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Relative note path, e.g. Projects/Home/Heating.md" }
-      },
-      "required": ["path"]
-    }
-  }
-]
+  ]
+}
 ```
 
 ### Cohere-compatible Tool Definition
@@ -381,11 +383,18 @@ curl -s http://localhost:8484/keyword-search \
 
 ### 3. Retrieve a Note
 
-Returns the full Markdown content of a single note.
+Returns the full Markdown content of a single note. Supports both GET (query parameter) and POST (JSON body).
 
 ```bash
+# GET variant
 curl -s "http://localhost:8484/note?path=Home/Heating/Heatpump.md" \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
+
+# POST variant (useful when all endpoints must use the same HTTP method)
+curl -s http://localhost:8484/note \
+  -H "Authorization: Bearer $API_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "Home/Heating/Heatpump.md"}'
 ```
 
 ### 4. Trigger Reindex
