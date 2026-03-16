@@ -72,6 +72,11 @@ def _register_paperless_webhook():
     """
     webhook_url = f"{RAG_API_INTERNAL_URL.rstrip('/')}/webhook/paperless"
 
+    # Build webhook headers: always include Content-Type, add auth if required
+    webhook_headers: dict[str, str] = {"Content-Type": "application/json"}
+    if AUTH_REQUIRED and API_BEARER_TOKEN:
+        webhook_headers["Authorization"] = f"Bearer {API_BEARER_TOKEN}"
+
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
     try:
         # List existing consumption templates / webhooks
@@ -112,7 +117,7 @@ def _register_paperless_webhook():
                         "use_params": False,
                         "params": {},
                         "body": '{"document_id": {document_id}, "action": "added"}',
-                        "headers": {"Content-Type": "application/json"},
+                        "headers": webhook_headers,
                     },
                 }
             ],
