@@ -324,6 +324,7 @@ class Indexer:
         # Phase 1: collect all documents from the API
         all_docs: list[dict] = []
         page = 1
+        fetch_complete = False
         while True:
             try:
                 resp = requests.get(
@@ -341,6 +342,7 @@ class Indexer:
             data = resp.json()
             all_docs.extend(data.get("results", []))
             if not data.get("next"):
+                fetch_complete = True
                 break
             page += 1
 
@@ -367,18 +369,23 @@ class Indexer:
                 on_progress(processed, total)
 
         # Phase 3: remove documents no longer in Paperless
-        api_file_paths = set()
-        for doc in all_docs:
-            fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
-            api_file_paths.add(fp)
+        # Only run cleanup when all pages were fetched successfully;
+        # a partial fetch would incorrectly delete still-existing docs.
+        if fetch_complete:
+            api_file_paths = set()
+            for doc in all_docs:
+                fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
+                api_file_paths.add(fp)
 
-        for doc_key in list(self._file_hashes):
-            if self._file_sources.get(doc_key, "obsidian") != "paperless":
-                continue
-            fp = self._file_path_from_key(doc_key)
-            if fp not in api_file_paths:
-                self.remove_file(fp, source="paperless")
-                logger.info("Removed deleted paperless doc from index: %s", fp)
+            for doc_key in list(self._file_hashes):
+                if self._file_sources.get(doc_key, "obsidian") != "paperless":
+                    continue
+                fp = self._file_path_from_key(doc_key)
+                if fp not in api_file_paths:
+                    self.remove_file(fp, source="paperless")
+                    logger.info("Removed deleted paperless doc from index: %s", fp)
+        else:
+            logger.warning("Skipping cleanup — API fetch was incomplete (%d pages, %d docs)", page, len(all_docs))
 
         logger.info("Full reindex [paperless] complete – %d docs updated.", count)
         return count
