@@ -248,7 +248,7 @@ class Indexer:
         doc_key = self._doc_key(source, file_path)
         try:
             # Current-style chunks: have an explicit source field.
-            self.collection.delete(where={"file_path": file_path, "source": source})
+            self.collection.delete(where={"$and": [{"file_path": file_path}, {"source": source}]})
         except Exception:
             pass
         try:
