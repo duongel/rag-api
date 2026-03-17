@@ -73,8 +73,8 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "default": true },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (case-insensitive substring match). Example: [\"etron\", \"rechnung\"]" },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match)." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive). Example: [\"etron\", \"rechnung\"]" },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
           "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year. Example: 2025" }
         },
         "required": ["query"]
@@ -91,8 +91,8 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (case-insensitive substring match)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match)." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
           "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
@@ -195,8 +195,8 @@ This format is for Google Gemini setups using `function_declarations`.
           "top_k": { "type": "integer", "description": "Maximum number of results." },
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags." },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (case-insensitive substring match)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match)." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
           "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
@@ -210,8 +210,8 @@ This format is for Google Gemini setups using `function_declarations`.
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
           "top_k": { "type": "integer", "description": "Maximum number of results." },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (case-insensitive substring match)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match)." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
           "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
@@ -246,8 +246,8 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
       "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
       "expand_links": { "type": "bool", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "required": false },
       "min_score": { "type": "float", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions.", "required": false },
-      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (case-insensitive substring match).", "required": false },
-      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match).", "required": false },
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive).", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive).", "required": false },
       "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year.", "required": false }
     }
   },
@@ -257,8 +257,8 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
     "parameter_definitions": {
       "query": { "type": "str", "description": "Exact search string.", "required": true },
       "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
-      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (case-insensitive substring match).", "required": false },
-      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (case-insensitive substring match).", "required": false },
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive).", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive).", "required": false },
       "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year.", "required": false }
     }
   },
@@ -489,7 +489,7 @@ Use `paperless_tags`, `paperless_correspondent`, or `paperless_created_year` whe
 | "Versicherungsdokumente 2024" | `paperless_tags: ["versicherung"]`, `paperless_created_year: 2024` |
 | "Rechnungen von Telekom letztes Jahr" | `paperless_correspondent: "Telekom"`, `paperless_created_year: 2025` |
 
-**How it works:** Filters first query the Paperless API for matching document IDs, then restrict the semantic/keyword search to only those documents. This combines Paperless' structured filters with RAG's semantic ranking.
+**How it works:** Filters are matched directly against metadata stored in ChromaDB at index time (tag names, correspondent name, creation year). No additional Paperless API call is needed at search time — the semantic/keyword search simply adds ChromaDB `where` conditions to restrict results.
 
 **When NOT to use filters:** If the question is purely conceptual ("How does X work?") or doesn't reference specific Paperless tags, correspondents, or time periods, omit the filters entirely — they would unnecessarily restrict results.
 
