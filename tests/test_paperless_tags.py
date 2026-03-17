@@ -38,22 +38,28 @@ class TestPaperlessMetadataText(unittest.TestCase):
 
     def test_failed_tag_lookup_is_not_cached_permanently(self):
         class _Resp:
-            def __init__(self, ok: bool, name: str = ""):
+            def __init__(self, ok: bool, data=None):
                 self.ok = ok
-                self._name = name
+                self._data = data or {}
 
             def json(self):
-                return {"name": self._name}
+                return self._data
 
         indexer_module._PAPERLESS_TAG_NAME_CACHE.clear()
 
-        with patch("requests.get", side_effect=[_Resp(False), _Resp(True, "rechnung")]) as mocked_get:
+        # First call: batch returns failure, individual fallback also fails
+        # Second call: batch returns the tag successfully
+        with patch("requests.get", side_effect=[
+            _Resp(False),              # 1st batch attempt fails
+            _Resp(False),              # 1st individual fallback fails
+            _Resp(True, {"results": [{"id": 123, "name": "rechnung"}]}),  # 2nd batch succeeds
+        ]) as mocked_get:
             first = _paperless_tag_names([123], "https://paperless.local", "token")
             second = _paperless_tag_names([123], "https://paperless.local", "token")
 
         self.assertEqual(first, [])
         self.assertEqual(second, ["rechnung"])
-        self.assertEqual(mocked_get.call_count, 2)
+        self.assertEqual(mocked_get.call_count, 3)
 
 
 if __name__ == "__main__":
