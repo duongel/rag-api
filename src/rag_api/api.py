@@ -161,6 +161,7 @@ def get_skill():
         raise HTTPException(status_code=404, detail="SKILL.md not found")
     content = _SKILL_PATH.read_text(encoding="utf-8")
     content = content.replace("http://127.0.0.1:8484", PUBLIC_URL)
+    content = content.replace("http://localhost:8484", PUBLIC_URL)
     return PlainTextResponse(content, media_type="text/markdown")
 
 
