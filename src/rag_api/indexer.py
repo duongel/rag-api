@@ -433,7 +433,8 @@ class Indexer:
 
         # Phase 1b: fetch remaining pages in parallel
         if total_pages > 1:
-            def _fetch_page(page_num: int) -> Optional[list]:
+            def _fetch_page(page_num: int) -> Optional[tuple]:
+                """Return (results, has_next) or None on failure."""
                 try:
                     r = requests.get(
                         f"{PAPERLESS_URL}/api/documents/",
@@ -442,31 +443,50 @@ class Indexer:
                         timeout=30,
                     )
                     if r.ok:
-                        return r.json().get("results", [])
+                        body = r.json()
+                        return (body.get("results", []), bool(body.get("next")))
                     logger.error("Paperless API returned %d for page %d", r.status_code, page_num)
                 except Exception as e:
                     logger.error("Paperless API request failed (page %d): %s", page_num, e)
                 return None
 
             failed_pages = 0
+            has_more_pages = False
             with ThreadPoolExecutor(max_workers=min(8, total_pages - 1)) as page_pool:
                 futures = {
                     page_pool.submit(_fetch_page, p): p
                     for p in range(2, total_pages + 1)
                 }
                 for future in as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        all_docs.extend(result)
+                    outcome = future.result()
+                    if outcome is not None:
+                        results, has_next = outcome
+                        all_docs.extend(results)
+                        # Track if any page beyond our initial estimate exists
+                        page_num = futures[future]
+                        if page_num == total_pages and has_next:
+                            has_more_pages = True
                     else:
                         failed_pages += 1
+
+            # Follow any tail pages that appeared after our initial count snapshot
+            if has_more_pages and failed_pages == 0:
+                extra_page = total_pages + 1
+                while True:
+                    outcome = _fetch_page(extra_page)
+                    if outcome is None:
+                        failed_pages += 1
+                        break
+                    results, has_next = outcome
+                    all_docs.extend(results)
+                    if not has_next:
+                        break
+                    extra_page += 1
+                total_pages = extra_page
 
             if failed_pages > 0:
                 fetch_complete = False
             elif len(all_docs) < total_count:
-                # Dataset changed during fetch or Paperless returned fewer
-                # results per page than requested — treat as incomplete to
-                # prevent the cleanup phase from deleting still-existing docs.
                 logger.warning(
                     "Expected %d documents but only received %d — marking fetch as incomplete",
                     total_count, len(all_docs),
