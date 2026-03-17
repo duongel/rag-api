@@ -79,6 +79,19 @@ class TestIndexPaperlessDoc:
         doc["content"] = "Version 2 with different text"
         assert indexer.index_paperless_doc(doc) is True
 
+    def test_metadata_only_change_reindexes(self, indexer):
+        doc = _make_doc(13, content="Stable OCR", title="Invoice", tags=[1])
+        assert indexer.index_paperless_doc(doc) is True
+
+        # OCR text unchanged, only metadata changed
+        doc["tags"] = [1, 2]
+        assert indexer.index_paperless_doc(doc) is True
+
+        results = indexer.collection.get(where={"paperless_doc_id": "13"}, include=["documents", "metadatas"])
+        assert results["documents"]
+        assert "Tags: 1,2" in results["documents"][0]
+        assert results["metadatas"][0]["tags"] == "1,2"
+
     def test_no_id_returns_false(self, indexer):
         assert indexer.index_paperless_doc({}) is False
 
