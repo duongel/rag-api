@@ -65,8 +65,8 @@ class TestPaperlessMetadataText(unittest.TestCase):
                 return {"name": self._name}
 
         indexer_module._PAPERLESS_CORRESPONDENT_CACHE.clear()
-        old_ttl = indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS
-        indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = 0
+        old_ttl = indexer_module._PAPERLESS_CACHE_TTL_SECONDS
+        indexer_module._PAPERLESS_CACHE_TTL_SECONDS = 0
         try:
             with patch("requests.get", side_effect=[_Resp(True, "Audi AG"), _Resp(True, "Audi Group")]):
                 first = _paperless_correspondent_name(7, "https://paperless.local", "token")
@@ -74,7 +74,7 @@ class TestPaperlessMetadataText(unittest.TestCase):
             self.assertEqual(first, "Audi AG")
             self.assertEqual(second, "Audi Group")
         finally:
-            indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = old_ttl
+            indexer_module._PAPERLESS_CACHE_TTL_SECONDS = old_ttl
 
 
 if __name__ == "__main__":
