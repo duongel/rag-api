@@ -360,6 +360,9 @@ class Indexer:
             logger.warning("Paperless API not configured — skipping reindex")
             return 0
 
+        # Clear tag name cache so renamed tags are picked up on each reindex
+        _PAPERLESS_TAG_NAME_CACHE.clear()
+
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
 
