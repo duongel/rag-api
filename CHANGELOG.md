@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/duongel/rag-api/compare/v1.8.1...v1.8.2) (2026-03-17)
+
+
+### Bug Fixes
+
+* install into current directory instead of fixed ~/rag-api ([3b3b8f6](https://github.com/duongel/rag-api/commit/3b3b8f6110fef966ff94f98ca9073a94658718e9))
+
 ## [1.8.1](https://github.com/duongel/rag-api/compare/v1.8.0...v1.8.1) (2026-03-17)
 
 
