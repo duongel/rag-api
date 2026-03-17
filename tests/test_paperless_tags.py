@@ -55,6 +55,27 @@ class TestPaperlessMetadataText(unittest.TestCase):
         self.assertEqual(second, ["rechnung"])
         self.assertEqual(mocked_get.call_count, 3)
 
+    def test_correspondent_cache_expires_and_refreshes_after_rename(self):
+        class _Resp:
+            def __init__(self, ok: bool, name: str):
+                self.ok = ok
+                self._name = name
+
+            def json(self):
+                return {"name": self._name}
+
+        indexer_module._PAPERLESS_CORRESPONDENT_CACHE.clear()
+        old_ttl = indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS
+        indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = 0
+        try:
+            with patch("requests.get", side_effect=[_Resp(True, "Audi AG"), _Resp(True, "Audi Group")]):
+                first = _paperless_correspondent_name(7, "https://paperless.local", "token")
+                second = _paperless_correspondent_name(7, "https://paperless.local", "token")
+            self.assertEqual(first, "Audi AG")
+            self.assertEqual(second, "Audi Group")
+        finally:
+            indexer_module._PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = old_ttl
+
 
 if __name__ == "__main__":
     unittest.main()

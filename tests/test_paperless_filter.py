@@ -20,19 +20,13 @@ class TestBuildChromadbFilters:
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron"])
-        assert result == {"$and": [{"source": "paperless"}, {"ptag_etron": 1}]}
+        assert result == {"source": "paperless"}
 
     def test_multiple_tags_filter(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron", "rechnung"])
-        assert result == {
-            "$and": [
-                {"source": "paperless"},
-                {"ptag_etron": 1},
-                {"ptag_rechnung": 1},
-            ]
-        }
+        assert result == {"source": "paperless"}
 
     def test_year_filter(self):
         from rag_api.search import _build_chromadb_filters
@@ -44,7 +38,7 @@ class TestBuildChromadbFilters:
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(correspondent="Audi")
-        assert result == {"$and": [{"source": "paperless"}, {"correspondent_name": "audi"}]}
+        assert result == {"source": "paperless"}
 
     def test_combined_filters(self):
         from rag_api.search import _build_chromadb_filters
@@ -56,8 +50,6 @@ class TestBuildChromadbFilters:
             "$and": [
                 {"source": "paperless"},
                 {"created_year": 2025},
-                {"correspondent_name": "audi"},
-                {"ptag_etron": 1},
             ]
         }
 
@@ -151,3 +143,57 @@ class TestKeywordSearchWithFilter:
             paperless_created_year=2020,
         )
         assert results == []
+
+    def test_filename_matching_stays_enabled_with_paperless_filters(self, searcher):
+        searcher.indexer.collection.upsert(
+            ids=["paperless::invoices/INV-1234.pdf#chunk_0"],
+            embeddings=[_fake_embed_query("x")],
+            documents=["OCR without invoice id"],
+            metadatas=[{
+                "file_path": "invoices/INV-1234.pdf",
+                "section": "",
+                "file_hash": "x",
+                "chunk_index": 0,
+                "source": "paperless",
+                "paperless_doc_id": "999",
+                "correspondent_name": "audi ag",
+                "tag_names": "car",
+                "created_year": 2025,
+            }],
+        )
+        searcher.indexer._file_sources["paperless::invoices/INV-1234.pdf"] = "paperless"
+
+        results = searcher.keyword_search(
+            "inv-1234",
+            top_k=10,
+            paperless_correspondent="Audi",
+        )
+
+        assert any(r["match_type"] == "filename" for r in results)
+
+    def test_text_filters_use_case_insensitive_substring(self, searcher):
+        searcher.indexer.collection.upsert(
+            ids=["paperless::docs/partial.pdf#chunk_0"],
+            embeddings=[_fake_embed_query("x")],
+            documents=["generic content"],
+            metadatas=[{
+                "file_path": "docs/partial.pdf",
+                "section": "",
+                "file_hash": "y",
+                "chunk_index": 0,
+                "source": "paperless",
+                "paperless_doc_id": "1000",
+                "correspondent_name": "audi ag",
+                "tag_names": "e-tron,leasing",
+                "created_year": 2025,
+            }],
+        )
+
+        results = searcher.keyword_search(
+            "generic",
+            top_k=10,
+            paperless_correspondent="AUDI",
+            paperless_tags=["tron"],
+        )
+
+        assert any(r.get("paperless_doc_id") == "1000" for r in results)
