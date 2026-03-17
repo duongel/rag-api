@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from rag_api import indexer as indexer_module
-from rag_api.indexer import _with_paperless_metadata_text, _paperless_tag_names
+from rag_api.indexer import _with_paperless_metadata_text, _paperless_tag_names, _paperless_correspondent_name
 
 
 class TestPaperlessMetadataText(unittest.TestCase):
