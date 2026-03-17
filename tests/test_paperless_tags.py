@@ -1,18 +1,8 @@
-import sys
-import types
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
-sys.modules.setdefault("chromadb", types.SimpleNamespace(PersistentClient=object))
-sys.modules.setdefault(
-    "frontmatter",
-    types.SimpleNamespace(load=lambda *a, **k: None, loads=lambda *a, **k: types.SimpleNamespace(metadata={})),
-)
-
-from rag_api import indexer as indexer_module  # noqa: E402
-from rag_api.indexer import _with_paperless_metadata_text, _paperless_tag_names  # noqa: E402
+from rag_api import indexer as indexer_module
+from rag_api.indexer import _with_paperless_metadata_text, _paperless_tag_names
 
 
 class TestPaperlessMetadataText(unittest.TestCase):

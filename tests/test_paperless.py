@@ -9,12 +9,6 @@ import os
 
 import pytest
 
-# Ensure config defaults are safe for testing (no external services)
-os.environ.setdefault("CHROMA_PATH", "/tmp/test_chroma")
-os.environ.setdefault("AUTH_REQUIRED", "false")
-os.environ.setdefault("PAPERLESS_URL", "http://paperless:8000")
-os.environ.setdefault("PAPERLESS_TOKEN", "test-token")
-
 
 # ---------------------------------------------------------------------------
 # Helpers

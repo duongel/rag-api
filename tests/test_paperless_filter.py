@@ -1,14 +1,8 @@
 """Tests for Paperless pre-filter search functionality."""
 
 from unittest.mock import MagicMock, patch
-import os
 
 import pytest
-
-os.environ.setdefault("CHROMA_PATH", "/tmp/test_chroma")
-os.environ.setdefault("AUTH_REQUIRED", "false")
-os.environ.setdefault("PAPERLESS_URL", "http://paperless:8000")
-os.environ.setdefault("PAPERLESS_TOKEN", "test-token")
 
 
 # ---------------------------------------------------------------------------

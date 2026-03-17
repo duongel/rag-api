@@ -1,8 +1,16 @@
 """Shared pytest fixtures for rag-api tests."""
 
+import os
 from pathlib import Path
 
 import pytest
+
+# Ensure safe defaults for all tests — must be set before any rag_api import
+# so that config module picks them up regardless of test ordering.
+os.environ.setdefault("CHROMA_PATH", "/tmp/test_chroma")
+os.environ.setdefault("AUTH_REQUIRED", "false")
+os.environ.setdefault("PAPERLESS_URL", "http://paperless:8000")
+os.environ.setdefault("PAPERLESS_TOKEN", "test-token")
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

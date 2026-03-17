@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Security, status
+from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -55,13 +55,13 @@ def require_auth(
 
     if not API_BEARER_TOKEN:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication is enabled but API_BEARER_TOKEN is not configured.",
         )
 
     if credentials is None or credentials.credentials != API_BEARER_TOKEN:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
