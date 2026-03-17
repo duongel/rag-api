@@ -200,16 +200,11 @@ def stats(_: None = Security(require_auth)):
 )
 def search(req: SearchRequest, _: None = Security(require_auth)):
     """Semantic similarity search across all indexed notes."""
-    from .search import query_paperless_doc_ids
-
-    doc_ids = query_paperless_doc_ids(
-        tags=req.paperless_tags,
-        correspondent=req.paperless_correspondent,
-        created_year=req.paperless_created_year,
-    )
     results = searcher.semantic_search(
         req.query, req.top_k, req.expand_links,
-        paperless_doc_ids=doc_ids,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
     )
     if req.min_score > 0:
         results = [r for r in results if r["score"] >= req.min_score]
@@ -232,14 +227,12 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
 )
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
-    from .search import query_paperless_doc_ids
-
-    doc_ids = query_paperless_doc_ids(
-        tags=req.paperless_tags,
-        correspondent=req.paperless_correspondent,
-        created_year=req.paperless_created_year,
+    results = searcher.keyword_search(
+        req.query, req.top_k,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
     )
-    results = searcher.keyword_search(req.query, req.top_k, paperless_doc_ids=doc_ids)
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 

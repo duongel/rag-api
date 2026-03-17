@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 64
 _PAPERLESS_TAG_NAME_CACHE: dict[str, str] = {}
+_PAPERLESS_CORRESPONDENT_CACHE: dict[str, str] = {}
 
 
 class Indexer:
@@ -178,20 +179,32 @@ class Indexer:
         doc_key = self._doc_key("paperless", file_path)
 
         meta: dict = {"paperless_doc_id": str(doc_id)}
+        from .config import PAPERLESS_URL, PAPERLESS_TOKEN
         if doc.get("title"):
             meta["title"] = doc["title"]
         if doc.get("correspondent"):
             meta["correspondent"] = str(doc["correspondent"])
+            if PAPERLESS_URL and PAPERLESS_TOKEN:
+                corr_name = _paperless_correspondent_name(
+                    doc["correspondent"], PAPERLESS_URL, PAPERLESS_TOKEN
+                )
+                if corr_name:
+                    meta["correspondent_name"] = corr_name.lower()
         tags = doc.get("tags", [])
         if tags:
             meta["tags"] = ",".join(str(t) for t in tags)
-            from .config import PAPERLESS_URL, PAPERLESS_TOKEN
             if PAPERLESS_URL and PAPERLESS_TOKEN:
                 tag_names = _paperless_tag_names(tags, PAPERLESS_URL, PAPERLESS_TOKEN)
                 if tag_names:
                     meta["tag_names"] = ", ".join(tag_names)
+                    for tn in tag_names:
+                        meta[f"ptag_{tn.lower()}"] = 1
         if doc.get("created"):
             meta["created"] = doc["created"]
+            try:
+                meta["created_year"] = int(doc["created"][:4])
+            except (ValueError, IndexError):
+                pass
 
         content_hash = hashlib.sha256(content.encode()).hexdigest()
         api_doc_hash = hashlib.sha256(
@@ -200,9 +213,11 @@ class Indexer:
                     "content": content,
                     "title": meta.get("title"),
                     "correspondent": meta.get("correspondent"),
+                    "correspondent_name": meta.get("correspondent_name"),
                     "tags": meta.get("tags"),
                     "tag_names": meta.get("tag_names"),
                     "created": meta.get("created"),
+                    "created_year": meta.get("created_year"),
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -360,8 +375,9 @@ class Indexer:
             logger.warning("Paperless API not configured — skipping reindex")
             return 0
 
-        # Clear tag name cache so renamed tags are picked up on each reindex
+        # Clear caches so renamed tags/correspondents are picked up on each reindex
         _PAPERLESS_TAG_NAME_CACHE.clear()
+        _PAPERLESS_CORRESPONDENT_CACHE.clear()
 
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
@@ -563,8 +579,9 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
     lines: list[str] = []
     if meta.get("title"):
         lines.append(f"Title: {meta['title']}")
-    if meta.get("correspondent"):
-        lines.append(f"Correspondent: {meta['correspondent']}")
+    corr_display = meta.get("correspondent_name") or meta.get("correspondent")
+    if corr_display:
+        lines.append(f"Correspondent: {corr_display}")
     tag_value = meta.get("tag_names") or meta.get("tags")
     if tag_value:
         tag_line = f"Tags: {tag_value}"
@@ -680,3 +697,29 @@ def _paperless_tag_names(
         if cached:
             names.append(cached)
     return names
+
+
+def _paperless_correspondent_name(
+    corr_id: Union[int, str], paperless_url: str, token: str
+) -> str:
+    """Resolve a Paperless correspondent ID to its display name, with caching."""
+    import requests
+
+    cid = str(corr_id)
+    if cid in _PAPERLESS_CORRESPONDENT_CACHE:
+        return _PAPERLESS_CORRESPONDENT_CACHE[cid]
+
+    try:
+        resp = requests.get(
+            f"{paperless_url}/api/correspondents/{cid}/",
+            headers={"Authorization": f"Token {token}"},
+            timeout=5,
+        )
+        if resp.ok:
+            name = str(resp.json().get("name", "")).strip()
+            if name:
+                _PAPERLESS_CORRESPONDENT_CACHE[cid] = name
+                return name
+    except Exception:
+        pass
+    return ""

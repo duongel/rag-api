@@ -1,4 +1,4 @@
-"""Tests for Paperless pre-filter search functionality."""
+"""Tests for Paperless ChromaDB-native filter search functionality."""
 
 from unittest.mock import MagicMock, patch
 
@@ -6,79 +6,60 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# query_paperless_doc_ids
+# _build_chromadb_filters
 # ---------------------------------------------------------------------------
 
 
-class TestQueryPaperlessDocIds:
+class TestBuildChromadbFilters:
     def test_returns_none_when_no_filters(self):
-        from rag_api.search import query_paperless_doc_ids
+        from rag_api.search import _build_chromadb_filters
 
-        assert query_paperless_doc_ids() is None
+        assert _build_chromadb_filters() is None
 
-    def test_returns_none_when_no_paperless_config(self):
-        from rag_api.search import query_paperless_doc_ids
+    def test_single_tag_filter(self):
+        from rag_api.search import _build_chromadb_filters
 
-        with patch("rag_api.config.PAPERLESS_URL", ""), patch("rag_api.config.PAPERLESS_TOKEN", ""):
-            result = query_paperless_doc_ids(tags=["etron"])
-        assert result is None
+        result = _build_chromadb_filters(tags=["etron"])
+        assert result == {"$and": [{"source": "paperless"}, {"ptag_etron": 1}]}
 
-    def test_returns_doc_ids_for_tag_filter(self):
-        from rag_api.search import query_paperless_doc_ids
+    def test_multiple_tags_filter(self):
+        from rag_api.search import _build_chromadb_filters
 
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {
-            "results": [{"id": 42}, {"id": 55}]
+        result = _build_chromadb_filters(tags=["etron", "rechnung"])
+        assert result == {
+            "$and": [
+                {"source": "paperless"},
+                {"ptag_etron": 1},
+                {"ptag_rechnung": 1},
+            ]
         }
 
-        with patch("requests.get", return_value=mock_resp) as mocked:
-            result = query_paperless_doc_ids(tags=["etron"])
+    def test_year_filter(self):
+        from rag_api.search import _build_chromadb_filters
 
-        assert result == ["42", "55"]
-        call_kwargs = mocked.call_args
-        assert "tags__name__icontains" in call_kwargs.kwargs.get("params", call_kwargs[1].get("params", {}))
+        result = _build_chromadb_filters(created_year=2025)
+        assert result == {"$and": [{"source": "paperless"}, {"created_year": 2025}]}
 
-    def test_returns_empty_list_when_no_matches(self):
-        from rag_api.search import query_paperless_doc_ids
+    def test_correspondent_filter_lowercased(self):
+        from rag_api.search import _build_chromadb_filters
 
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {"results": []}
+        result = _build_chromadb_filters(correspondent="Audi")
+        assert result == {"$and": [{"source": "paperless"}, {"correspondent_name": "audi"}]}
 
-        with patch("requests.get", return_value=mock_resp):
-            result = query_paperless_doc_ids(tags=["nonexistent"])
+    def test_combined_filters(self):
+        from rag_api.search import _build_chromadb_filters
 
-        assert result == []
-
-    def test_returns_empty_on_api_failure(self):
-        from rag_api.search import query_paperless_doc_ids
-
-        mock_resp = MagicMock()
-        mock_resp.ok = False
-        mock_resp.status_code = 500
-
-        with patch("requests.get", return_value=mock_resp):
-            result = query_paperless_doc_ids(tags=["etron"])
-
-        assert result == []
-
-    def test_passes_year_and_correspondent(self):
-        from rag_api.search import query_paperless_doc_ids
-
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.json.return_value = {"results": [{"id": 10}]}
-
-        with patch("requests.get", return_value=mock_resp) as mocked:
-            result = query_paperless_doc_ids(
-                correspondent="Audi", created_year=2025
-            )
-
-        assert result == ["10"]
-        params = mocked.call_args.kwargs.get("params", mocked.call_args[1].get("params", {}))
-        assert params["correspondent__name__icontains"] == "Audi"
-        assert params["created__year"] == 2025
+        result = _build_chromadb_filters(
+            tags=["etron"], correspondent="Audi", created_year=2025
+        )
+        assert result == {
+            "$and": [
+                {"source": "paperless"},
+                {"created_year": 2025},
+                {"correspondent_name": "audi"},
+                {"ptag_etron": 1},
+            ]
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +79,7 @@ def _fake_embed_query(text):
 
 @pytest.fixture()
 def searcher():
-    """Create a Searcher with an in-memory ChromaDB and two indexed docs."""
+    """Create a Searcher with an in-memory ChromaDB and two indexed docs with metadata."""
     import chromadb
 
     ephemeral = chromadb.EphemeralClient()
@@ -112,18 +93,20 @@ def searcher():
 
         idx = Indexer()
 
-        # Index two paperless docs
+        # Index two paperless docs with full metadata
         idx.index_paperless_doc({
             "id": 42,
             "content": "Audi e-tron Rechnung über 500 EUR",
             "title": "Audi Rechnung",
             "tags": [1],
+            "created": "2025-03-15T00:00:00Z",
         })
         idx.index_paperless_doc({
             "id": 55,
             "content": "BMW Werkstattrechnung über 300 EUR",
             "title": "BMW Rechnung",
             "tags": [2],
+            "created": "2024-06-01T00:00:00Z",
         })
 
         with patch("rag_api.search.embed_query", side_effect=_fake_embed_query):
@@ -136,35 +119,35 @@ class TestSemanticSearchWithFilter:
         doc_ids = {r.get("paperless_doc_id") for r in results}
         assert "42" in doc_ids or "55" in doc_ids
 
-    def test_filter_restricts_to_matching_docs(self, searcher):
+    def test_year_filter_restricts_results(self, searcher):
         results = searcher.semantic_search(
             "Rechnung", top_k=10, expand_links=False,
-            paperless_doc_ids=["42"],
+            paperless_created_year=2025,
         )
         doc_ids = {r.get("paperless_doc_id") for r in results}
         assert doc_ids == {"42"}
 
-    def test_empty_filter_returns_nothing(self, searcher):
+    def test_year_filter_no_match_returns_empty(self, searcher):
         results = searcher.semantic_search(
             "Rechnung", top_k=10, expand_links=False,
-            paperless_doc_ids=[],
+            paperless_created_year=2020,
         )
         assert results == []
 
 
 class TestKeywordSearchWithFilter:
-    def test_filter_restricts_keyword_results(self, searcher):
+    def test_year_filter_restricts_keyword_results(self, searcher):
         results = searcher.keyword_search(
             "Rechnung", top_k=10,
-            paperless_doc_ids=["42"],
+            paperless_created_year=2025,
         )
         doc_ids = {r.get("paperless_doc_id") for r in results}
-        # Should only contain doc 42, not 55
+        # Should only contain doc 42 (2025), not 55 (2024)
         assert "55" not in doc_ids
 
-    def test_empty_filter_returns_nothing(self, searcher):
+    def test_year_filter_no_match_returns_empty(self, searcher):
         results = searcher.keyword_search(
             "Rechnung", top_k=10,
-            paperless_doc_ids=[],
+            paperless_created_year=2020,
         )
         assert results == []

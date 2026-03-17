@@ -40,24 +40,21 @@ class Searcher:
 
     def semantic_search(
         self, query: str, top_k: int = 5, expand_links: bool = True,
-        paperless_doc_ids: Optional[list[str]] = None,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
         append linked notes up to 2 degrees of separation.
 
-        When *paperless_doc_ids* is given, only chunks belonging to those
-        Paperless documents are searched (pre-filter).
+        Paperless filter parameters build a ChromaDB ``where`` clause so
+        only matching documents are considered.
         """
         query_embedding = embed_query(query)
 
-        where = None
-        if paperless_doc_ids is not None:
-            if not paperless_doc_ids:
-                return []  # filter matched nothing
-            if len(paperless_doc_ids) == 1:
-                where = {"paperless_doc_id": paperless_doc_ids[0]}
-            else:
-                where = {"paperless_doc_id": {"$in": paperless_doc_ids}}
+        where = _build_chromadb_filters(
+            paperless_tags, paperless_correspondent, paperless_created_year,
+        )
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
@@ -227,7 +224,9 @@ class Searcher:
 
     def keyword_search(
         self, query: str, top_k: int = 10,
-        paperless_doc_ids: Optional[list[str]] = None,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
     ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
 
@@ -235,77 +234,61 @@ class Searcher:
         frequency so that results containing the query more often or as a
         whole word rank higher.
 
-        When *paperless_doc_ids* is given, only Paperless documents with
-        those IDs are considered.
+        Paperless filter parameters are mapped to ChromaDB ``where``
+        conditions so only matching chunks participate.
         """
-        allowed_doc_ids: Optional[set[str]] = None
-        if paperless_doc_ids is not None:
-            if not paperless_doc_ids:
-                return []
-            allowed_doc_ids = set(paperless_doc_ids)
+        where = _build_chromadb_filters(
+            paperless_tags, paperless_correspondent, paperless_created_year,
+        )
+        has_filter = where is not None
 
         query_lower = query.lower()
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
         results: list[dict] = []
         seen: set[str] = set()
 
-        # Build reverse lookup so we can map file_path → doc_id for paperless files
-        paperless_path_to_id: dict[str, str] = {}
-        if allowed_doc_ids is not None:
-            paperless_path_to_id = {
-                fp: did for did, fp in self.indexer._paperless_doc_paths.items()
-            }
-
-        # 1) Filename matches — only for text-readable (Markdown) obsidian files
-        for doc_key, source in self.indexer._file_sources.items():
-            fp = self.indexer._file_path_from_key(doc_key)
-            if query_lower not in fp.lower():
-                continue
-            # When Paperless filters are active, skip non-matching files
-            if allowed_doc_ids is not None:
-                if source != "paperless":
+        # 1) Filename matches — skip when Paperless filters are active
+        #    (ChromaDB content matching in step 2 covers those results)
+        if not has_filter:
+            for doc_key, source in self.indexer._file_sources.items():
+                fp = self.indexer._file_path_from_key(doc_key)
+                if query_lower not in fp.lower():
                     continue
-                pdid = paperless_path_to_id.get(fp)
-                if pdid is None or pdid not in allowed_doc_ids:
+                if source == "paperless" or not fp.endswith(".md"):
+                    # PDFs are binary; content is already in ChromaDB (step 2)
+                    results.append(
+                        {
+                            "file_path": fp,
+                            "section": "",
+                            "content": "",
+                            "score": 1.0,
+                            "match_type": "filename",
+                            "source": source,
+                        }
+                    )
+                    seen.add(f"{source}::{fp}")
                     continue
-            if source == "paperless" or not fp.endswith(".md"):
-                # PDFs are binary; content is already in ChromaDB (step 2)
-                results.append(
-                    {
-                        "file_path": fp,
-                        "section": "",
-                        "content": "",
-                        "score": 1.0,
-                        "match_type": "filename",
-                        "source": source,
-                    }
-                )
-                seen.add(f"{source}::{fp}")
-                continue
-            base = Path(VAULT_PATH)
-            full_path = base / fp
-            if full_path.exists():
-                content = full_path.read_text(encoding="utf-8", errors="ignore")
-                results.append(
-                    {
-                        "file_path": fp,
-                        "section": "",
-                        "content": content[:1000],
-                        "score": 1.0,
-                        "match_type": "filename",
-                        "source": source,
-                    }
-                )
-                seen.add(f"{source}::{fp}")
+                base = Path(VAULT_PATH)
+                full_path = base / fp
+                if full_path.exists():
+                    content = full_path.read_text(encoding="utf-8", errors="ignore")
+                    results.append(
+                        {
+                            "file_path": fp,
+                            "section": "",
+                            "content": content[:1000],
+                            "score": 1.0,
+                            "match_type": "filename",
+                            "source": source,
+                        }
+                    )
+                    seen.add(f"{source}::{fp}")
 
         # 2) Content matches — always case-insensitive via full scan
         try:
             get_kwargs: dict = {"include": ["documents", "metadatas"]}
-            if allowed_doc_ids is not None:
-                if len(allowed_doc_ids) == 1:
-                    get_kwargs["where"] = {"paperless_doc_id": next(iter(allowed_doc_ids))}
-                else:
-                    get_kwargs["where"] = {"paperless_doc_id": {"$in": list(allowed_doc_ids)}}
+            if where is not None:
+                get_kwargs["where"] = where
             all_docs = self.collection.get(**get_kwargs)
             for i, doc in enumerate(all_docs["documents"] or []):
                 if query_lower not in doc.lower():
@@ -404,79 +387,28 @@ class Searcher:
         return note
 
 
-def query_paperless_doc_ids(
+def _build_chromadb_filters(
     tags: Optional[list[str]] = None,
     correspondent: Optional[str] = None,
     created_year: Optional[int] = None,
-) -> Optional[list[str]]:
-    """Query the Paperless API with structured filters and return matching doc IDs.
+) -> Optional[dict]:
+    """Build a ChromaDB ``where`` filter from Paperless filter parameters.
 
-    Returns None if no filters are given (= no pre-filtering).
-    Returns an empty list if filters are given but nothing matches.
+    Returns ``None`` when no filters are given (= search everything).
+    Filters use metadata fields stored at index time so no Paperless API
+    call is needed.
     """
-    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
-
-    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+    if not any([tags, correspondent, created_year]):
         return None
 
-    has_filter = bool(tags or correspondent or created_year)
-    if not has_filter:
-        return None
+    conditions: list[dict] = [{"source": "paperless"}]
 
-    import requests
-
-    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
-
-    def _fetch_all_ids(req_params: dict) -> Optional[set[str]]:
-        """Fetch all pages for a filter query, returning doc IDs or None on error."""
-        doc_ids: set[str] = set()
-        url: Optional[str] = f"{PAPERLESS_URL}/api/documents/"
-        params: Optional[dict] = req_params
-        while url:
-            try:
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
-                if not resp.ok:
-                    logger.warning("Paperless filter query failed: %s", resp.status_code)
-                    return None
-                data = resp.json()
-                doc_ids.update(str(doc["id"]) for doc in data.get("results", []))
-                url = data.get("next")
-                params = None  # next URL already contains query params
-            except Exception:
-                logger.exception("Paperless filter query error")
-                return None
-        return doc_ids
-
-    params: dict = {"fields": "id", "page_size": 500}
-    if tags:
-        # tags__name__icontains accepts a single string; for multiple tags
-        # we issue one query per tag and intersect the results.
-        if len(tags) == 1:
-            params["tags__name__icontains"] = tags[0]
-        else:
-            # Multiple tags → intersect doc IDs from individual queries
-            id_sets: list[set[str]] = []
-            for tag in tags:
-                tag_params = dict(params)
-                tag_params["tags__name__icontains"] = tag
-                if correspondent:
-                    tag_params["correspondent__name__icontains"] = correspondent
-                if created_year:
-                    tag_params["created__year"] = created_year
-                ids = _fetch_all_ids(tag_params)
-                if ids is None:
-                    return []
-                id_sets.append(ids)
-            result_ids = id_sets[0]
-            for s in id_sets[1:]:
-                result_ids &= s
-            return sorted(result_ids)
+    if created_year is not None:
+        conditions.append({"created_year": created_year})
     if correspondent:
-        params["correspondent__name__icontains"] = correspondent
-    if created_year:
-        params["created__year"] = created_year
+        conditions.append({"correspondent_name": correspondent.lower()})
+    if tags:
+        for tag in tags:
+            conditions.append({f"ptag_{tag.lower()}": 1})
 
-    ids = _fetch_all_ids(params)
-    if ids is None:
-        return []
-    return sorted(ids)
+    return {"$and": conditions} if len(conditions) > 1 else conditions[0]
