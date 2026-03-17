@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from pathlib import Path
+from typing import List, Sequence, Union
 
 import chromadb
 
@@ -203,7 +204,7 @@ class Indexer:
         if not chunks:
             return False
 
-        texts = [c.content for c in chunks]
+        texts = [_with_paperless_metadata_text(c.content, meta) for c in chunks]
         embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH):
             embeddings.extend(embed_documents(texts[i : i + _EMBED_BATCH]))
@@ -539,6 +540,8 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
         lines.append(f"Correspondent: {meta['correspondent']}")
     if meta.get("tag_names"):
         lines.append(f"Tags: {meta['tag_names']}")
+    elif meta.get("tags"):
+        lines.append(f"Tags: {meta['tags']}")
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
@@ -589,7 +592,9 @@ def _paperless_api_meta(file_path: str) -> dict:
         return {}
 
 
-def _paperless_tag_names(tag_ids: list[int] | list[str], paperless_url: str, token: str) -> list[str]:
+def _paperless_tag_names(
+    tag_ids: Sequence[Union[int, str]], paperless_url: str, token: str
+) -> List[str]:
     """Resolve Paperless tag IDs to names with an in-memory cache."""
     import requests
 

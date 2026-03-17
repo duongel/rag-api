@@ -157,6 +157,28 @@ class TestIndexPaperlessDoc:
         assert meta["tags"] == "1,2,3"
         assert meta["created"] == "2024-01-15"
 
+    def test_metadata_is_embedded_into_indexed_chunk_text(self, indexer):
+        doc = _make_doc(
+            12,
+            content="OCR body text",
+            title="Gas Invoice",
+            correspondent=7,
+            tags=[10, 11],
+        )
+
+        assert indexer.index_paperless_doc(doc) is True
+
+        results = indexer.collection.get(
+            where={"paperless_doc_id": "12"}, include=["documents", "metadatas"]
+        )
+        assert results["documents"]
+        chunk_text = results["documents"][0]
+        assert "Paperless Metadata" in chunk_text
+        assert "Title: Gas Invoice" in chunk_text
+        assert "Correspondent: 7" in chunk_text
+        assert "Tags: 10,11" in chunk_text
+        assert chunk_text.endswith("OCR body text")
+
 
 # ===========================================================================
 # remove_paperless_doc
