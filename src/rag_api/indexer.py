@@ -552,16 +552,20 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
 
     This lets semantic + keyword retrieval match tags/title/correspondent even
     if these terms do not appear in the OCR-extracted PDF body.
+
+    Tags are repeated to give them more weight in the embedding — a single
+    mention would be <1 % of a typical 1500-char chunk and easily drowned out
+    by unrelated OCR text.
     """
     lines: list[str] = []
     if meta.get("title"):
         lines.append(f"Title: {meta['title']}")
     if meta.get("correspondent"):
         lines.append(f"Correspondent: {meta['correspondent']}")
-    if meta.get("tag_names"):
-        lines.append(f"Tags: {meta['tag_names']}")
-    elif meta.get("tags"):
-        lines.append(f"Tags: {meta['tags']}")
+    tag_value = meta.get("tag_names") or meta.get("tags")
+    if tag_value:
+        tag_line = f"Tags: {tag_value}"
+        lines.extend([tag_line] * 3)
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content

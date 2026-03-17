@@ -36,6 +36,10 @@ class TestPaperlessMetadataText(unittest.TestCase):
         content = "plain page text"
         self.assertEqual(_with_paperless_metadata_text(content, {}), content)
 
+    def test_tags_are_repeated_for_embedding_weight(self):
+        enriched = _with_paperless_metadata_text("body", {"tag_names": "etron"})
+        self.assertEqual(enriched.count("Tags: etron"), 3)
+
     def test_failed_tag_lookup_is_not_cached_permanently(self):
         class _Resp:
             def __init__(self, ok: bool, data=None):
