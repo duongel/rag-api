@@ -20,13 +20,19 @@ class TestBuildChromadbFilters:
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron"])
-        assert result == {"source": "paperless"}
+        assert result == {"$and": [{"source": "paperless"}, {"ptag_etron": 1}]}
 
     def test_multiple_tags_filter(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron", "rechnung"])
-        assert result == {"source": "paperless"}
+        assert result == {
+            "$and": [
+                {"source": "paperless"},
+                {"ptag_etron": 1},
+                {"ptag_rechnung": 1},
+            ]
+        }
 
     def test_year_filter(self):
         from rag_api.search import _build_chromadb_filters
@@ -38,7 +44,7 @@ class TestBuildChromadbFilters:
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(correspondent="Audi")
-        assert result == {"source": "paperless"}
+        assert result == {"$and": [{"source": "paperless"}, {"correspondent_name_lc": "audi"}]}
 
     def test_combined_filters(self):
         from rag_api.search import _build_chromadb_filters
@@ -50,6 +56,8 @@ class TestBuildChromadbFilters:
             "$and": [
                 {"source": "paperless"},
                 {"created_year": 2025},
+                {"correspondent_name_lc": "audi"},
+                {"ptag_etron": 1},
             ]
         }
 
@@ -69,6 +77,30 @@ def _fake_embed_query(text):
     return [0.5] * EMBED_DIM
 
 
+def _fake_paperless_api(url, **kwargs):
+    """Mock Paperless API responses for tags and correspondents."""
+    resp = MagicMock()
+    resp.ok = True
+    if "/api/tags/" in url and "?" not in url.split("/api/tags/")[1].rstrip("/"):
+        # Individual tag lookup: /api/tags/<id>/
+        tag_id = url.rstrip("/").split("/")[-1]
+        names = {"1": "etron", "2": "werkstatt", "3": "versicherung"}
+        resp.json.return_value = {"id": int(tag_id), "name": names.get(tag_id, f"tag{tag_id}")}
+    elif "/api/tags/" in url:
+        # Batch tag lookup: /api/tags/?id__in=...
+        id_in = kwargs.get("params", {}).get("id__in", "")
+        ids = id_in.split(",") if id_in else []
+        names = {"1": "etron", "2": "werkstatt", "3": "versicherung"}
+        resp.json.return_value = {"results": [{"id": int(i), "name": names.get(i, f"tag{i}")} for i in ids if i in names]}
+    elif "/api/correspondents/" in url:
+        corr_id = url.rstrip("/").split("/")[-1]
+        names = {"10": "Audi AG", "20": "BMW Group"}
+        resp.json.return_value = {"id": int(corr_id), "name": names.get(corr_id, f"corr{corr_id}")}
+    else:
+        resp.ok = False
+    return resp
+
+
 @pytest.fixture()
 def searcher():
     """Create a Searcher with an in-memory ChromaDB and two indexed docs with metadata."""
@@ -79,9 +111,13 @@ def searcher():
     with (
         patch("rag_api.indexer.embed_documents", side_effect=_fake_embed),
         patch("rag_api.indexer.chromadb.PersistentClient", return_value=ephemeral),
+        patch("requests.get", side_effect=_fake_paperless_api),
     ):
-        from rag_api.indexer import Indexer
+        from rag_api.indexer import Indexer, _PAPERLESS_TAG_NAME_CACHE, _PAPERLESS_CORRESPONDENT_CACHE
         from rag_api.search import Searcher
+
+        _PAPERLESS_TAG_NAME_CACHE.clear()
+        _PAPERLESS_CORRESPONDENT_CACHE.clear()
 
         idx = Indexer()
 
@@ -91,6 +127,7 @@ def searcher():
             "content": "Audi e-tron Rechnung über 500 EUR",
             "title": "Audi Rechnung",
             "tags": [1],
+            "correspondent": 10,
             "created": "2025-03-15T00:00:00Z",
         })
         idx.index_paperless_doc({
@@ -98,6 +135,7 @@ def searcher():
             "content": "BMW Werkstattrechnung über 300 EUR",
             "title": "BMW Rechnung",
             "tags": [2],
+            "correspondent": 20,
             "created": "2024-06-01T00:00:00Z",
         })
 
@@ -119,10 +157,41 @@ class TestSemanticSearchWithFilter:
         doc_ids = {r.get("paperless_doc_id") for r in results}
         assert doc_ids == {"42"}
 
+    def test_tag_filter_restricts_results(self, searcher):
+        results = searcher.semantic_search(
+            "Rechnung", top_k=10, expand_links=False,
+            paperless_tags=["etron"],
+        )
+        doc_ids = {r.get("paperless_doc_id") for r in results}
+        assert doc_ids == {"42"}
+
+    def test_correspondent_filter_restricts_results(self, searcher):
+        results = searcher.semantic_search(
+            "Rechnung", top_k=10, expand_links=False,
+            paperless_correspondent="BMW Group",
+        )
+        doc_ids = {r.get("paperless_doc_id") for r in results}
+        assert doc_ids == {"55"}
+
+    def test_combined_tag_and_year_filter(self, searcher):
+        results = searcher.semantic_search(
+            "Rechnung", top_k=10, expand_links=False,
+            paperless_tags=["etron"], paperless_created_year=2025,
+        )
+        doc_ids = {r.get("paperless_doc_id") for r in results}
+        assert doc_ids == {"42"}
+
     def test_year_filter_no_match_returns_empty(self, searcher):
         results = searcher.semantic_search(
             "Rechnung", top_k=10, expand_links=False,
             paperless_created_year=2020,
+        )
+        assert results == []
+
+    def test_tag_filter_no_match_returns_empty(self, searcher):
+        results = searcher.semantic_search(
+            "Rechnung", top_k=10, expand_links=False,
+            paperless_tags=["nonexistent"],
         )
         assert results == []
 
@@ -134,7 +203,22 @@ class TestKeywordSearchWithFilter:
             paperless_created_year=2025,
         )
         doc_ids = {r.get("paperless_doc_id") for r in results}
-        # Should only contain doc 42 (2025), not 55 (2024)
+        assert "55" not in doc_ids
+
+    def test_tag_filter_restricts_keyword_results(self, searcher):
+        results = searcher.keyword_search(
+            "Rechnung", top_k=10,
+            paperless_tags=["werkstatt"],
+        )
+        doc_ids = {r.get("paperless_doc_id") for r in results}
+        assert doc_ids == {"55"}
+
+    def test_correspondent_filter_restricts_keyword_results(self, searcher):
+        results = searcher.keyword_search(
+            "Rechnung", top_k=10,
+            paperless_correspondent="Audi AG",
+        )
+        doc_ids = {r.get("paperless_doc_id") for r in results}
         assert "55" not in doc_ids
 
     def test_year_filter_no_match_returns_empty(self, searcher):
@@ -156,8 +240,8 @@ class TestKeywordSearchWithFilter:
                 "chunk_index": 0,
                 "source": "paperless",
                 "paperless_doc_id": "999",
-                "correspondent_name": "audi ag",
-                "tag_names": "car",
+                "correspondent_name": "Audi AG",
+                "correspondent_name_lc": "audi ag",
                 "created_year": 2025,
             }],
         )
@@ -166,12 +250,12 @@ class TestKeywordSearchWithFilter:
         results = searcher.keyword_search(
             "inv-1234",
             top_k=10,
-            paperless_correspondent="Audi",
+            paperless_correspondent="Audi AG",
         )
 
         assert any(r["match_type"] == "filename" for r in results)
 
-    def test_text_filters_use_case_insensitive_substring(self, searcher):
+    def test_exact_tag_and_correspondent_filtering(self, searcher):
         searcher.indexer.collection.upsert(
             ids=["paperless::docs/partial.pdf#chunk_0"],
             embeddings=[_fake_embed_query("x")],
@@ -183,8 +267,10 @@ class TestKeywordSearchWithFilter:
                 "chunk_index": 0,
                 "source": "paperless",
                 "paperless_doc_id": "1000",
-                "correspondent_name": "audi ag",
-                "tag_names": "e-tron,leasing",
+                "correspondent_name": "Audi AG",
+                "correspondent_name_lc": "audi ag",
+                "ptag_e-tron": 1,
+                "ptag_leasing": 1,
                 "created_year": 2025,
             }],
         )
@@ -192,8 +278,8 @@ class TestKeywordSearchWithFilter:
         results = searcher.keyword_search(
             "generic",
             top_k=10,
-            paperless_correspondent="AUDI",
-            paperless_tags=["tron"],
+            paperless_correspondent="Audi AG",
+            paperless_tags=["e-tron"],
         )
 
         assert any(r.get("paperless_doc_id") == "1000" for r in results)
