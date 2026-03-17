@@ -1,3 +1,16 @@
+## [1.9.2](https://github.com/duongel/rag-api/compare/v1.9.1...v1.9.2) (2026-03-17)
+
+
+### Bug Fixes
+
+* **indexer:** follow tail pages that appear during parallel fetch ([6530b34](https://github.com/duongel/rag-api/commit/6530b341b5a898036a79bdfd55f0738e1b7cfaa4))
+* **indexer:** guard against incomplete parallel fetch before cleanup ([3db6828](https://github.com/duongel/rag-api/commit/3db68289f30a004eb862def83eae220e65a87c4b))
+
+
+### Performance Improvements
+
+* **indexer:** fetch Paperless API pages in parallel ([e6593a7](https://github.com/duongel/rag-api/commit/e6593a79506ad874482facbc2e0a6279ab1b227a))
+
 ## [1.9.1](https://github.com/duongel/rag-api/compare/v1.9.0...v1.9.1) (2026-03-17)
 
 
