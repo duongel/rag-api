@@ -1,11 +1,15 @@
 """Semantic and keyword search across the indexed Obsidian vault."""
 
+import logging
 import re
 from pathlib import Path
+from typing import Optional
 
 from .config import VAULT_PATH, DATA_SOURCES
 from .embeddings import embed_query
 from .indexer import Indexer
+
+logger = logging.getLogger(__name__)
 
 # Maximum number of link-expanded notes appended to a result set
 _MAX_LINK_EXPANSIONS = 10
@@ -35,17 +39,35 @@ class Searcher:
     # ------------------------------------------------------------------
 
     def semantic_search(
-        self, query: str, top_k: int = 5, expand_links: bool = True
+        self, query: str, top_k: int = 5, expand_links: bool = True,
+        paperless_doc_ids: Optional[list[str]] = None,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
-        append linked notes up to 2 degrees of separation."""
+        append linked notes up to 2 degrees of separation.
+
+        When *paperless_doc_ids* is given, only chunks belonging to those
+        Paperless documents are searched (pre-filter).
+        """
         query_embedding = embed_query(query)
 
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, self.collection.count() or 1),
-            include=["documents", "metadatas", "distances"],
-        )
+        where = None
+        if paperless_doc_ids is not None:
+            if not paperless_doc_ids:
+                return []  # filter matched nothing
+            if len(paperless_doc_ids) == 1:
+                where = {"paperless_doc_id": paperless_doc_ids[0]}
+            else:
+                where = {"paperless_doc_id": {"$in": paperless_doc_ids}}
+
+        query_kwargs: dict = {
+            "query_embeddings": [query_embedding],
+            "n_results": min(top_k, self.collection.count() or 1),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            query_kwargs["where"] = where
+
+        results = self.collection.query(**query_kwargs)
 
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
@@ -203,13 +225,25 @@ class Searcher:
     # Keyword / exact-match search
     # ------------------------------------------------------------------
 
-    def keyword_search(self, query: str, top_k: int = 10) -> list[dict]:
+    def keyword_search(
+        self, query: str, top_k: int = 10,
+        paperless_doc_ids: Optional[list[str]] = None,
+    ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
 
         Scoring is based on match location, word-boundary matches, and
         frequency so that results containing the query more often or as a
         whole word rank higher.
+
+        When *paperless_doc_ids* is given, only Paperless documents with
+        those IDs are considered.
         """
+        allowed_doc_ids: Optional[set[str]] = None
+        if paperless_doc_ids is not None:
+            if not paperless_doc_ids:
+                return []
+            allowed_doc_ids = set(paperless_doc_ids)
+
         query_lower = query.lower()
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
         results: list[dict] = []
@@ -252,7 +286,13 @@ class Searcher:
 
         # 2) Content matches — always case-insensitive via full scan
         try:
-            all_docs = self.collection.get(include=["documents", "metadatas"])
+            get_kwargs: dict = {"include": ["documents", "metadatas"]}
+            if allowed_doc_ids is not None:
+                if len(allowed_doc_ids) == 1:
+                    get_kwargs["where"] = {"paperless_doc_id": next(iter(allowed_doc_ids))}
+                else:
+                    get_kwargs["where"] = {"paperless_doc_id": {"$in": list(allowed_doc_ids)}}
+            all_docs = self.collection.get(**get_kwargs)
             for i, doc in enumerate(all_docs["documents"] or []):
                 if query_lower not in doc.lower():
                     continue
@@ -348,3 +388,50 @@ class Searcher:
         if meta.get("paperless_doc_id"):
             note["paperless_doc_id"] = meta["paperless_doc_id"]
         return note
+
+
+def query_paperless_doc_ids(
+    tags: Optional[list[str]] = None,
+    correspondent: Optional[str] = None,
+    created_year: Optional[int] = None,
+) -> Optional[list[str]]:
+    """Query the Paperless API with structured filters and return matching doc IDs.
+
+    Returns None if no filters are given (= no pre-filtering).
+    Returns an empty list if filters are given but nothing matches.
+    """
+    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+
+    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+        return None
+
+    has_filter = bool(tags or correspondent or created_year)
+    if not has_filter:
+        return None
+
+    import requests
+
+    params: dict = {"fields": "id", "page_size": 500}
+    if tags:
+        params["tags__name__icontains"] = tags
+    if correspondent:
+        params["correspondent__name__icontains"] = correspondent
+    if created_year:
+        params["created__year"] = created_year
+
+    try:
+        resp = requests.get(
+            f"{PAPERLESS_URL}/api/documents/",
+            params=params,
+            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning("Paperless filter query failed: %s", resp.status_code)
+            return None
+        data = resp.json()
+        doc_ids = [str(doc["id"]) for doc in data.get("results", [])]
+        return doc_ids
+    except Exception:
+        logger.exception("Paperless filter query error")
+        return None

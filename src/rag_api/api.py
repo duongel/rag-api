@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, Security, status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from typing import Optional
 
 from urllib.parse import quote
 
@@ -74,6 +75,9 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     expand_links: bool = True
     min_score: float = 0.0  # filter results below this threshold
+    paperless_tags: Optional[list[str]] = None
+    paperless_correspondent: Optional[str] = None
+    paperless_created_year: Optional[int] = None
 
 
 class SearchResult(BaseModel):
@@ -186,14 +190,26 @@ def stats(_: None = Security(require_auth)):
         "Results are graph-boosted: notes connected via wikilinks, backlinks, or shared tags "
         "are ranked higher when they are strongly linked to top semantic matches.\n\n"
         "`match_type` values: `semantic` | `link_1` | `backlink` | `tag` | `link_2`\n\n"
+        "**Paperless filters:** pass `paperless_tags`, `paperless_correspondent`, or "
+        "`paperless_created_year` to pre-filter via the Paperless API before semantic ranking.\n\n"
         "**Use for:** conceptual questions, topics, explanations.\n\n"
-        "**Do NOT use for:** abbreviations, URLs, exact class/enum names → use `/keyword-search`.\n\n"
+        "**Do NOT use for:** abbreviations, URLs, exact class/enum names \u2192 use `/keyword-search`.\n\n"
         "Set `min_score: 0.70` to suppress low-confidence results."
     ),
 )
 def search(req: SearchRequest, _: None = Security(require_auth)):
     """Semantic similarity search across all indexed notes."""
-    results = searcher.semantic_search(req.query, req.top_k, req.expand_links)
+    from .search import query_paperless_doc_ids
+
+    doc_ids = query_paperless_doc_ids(
+        tags=req.paperless_tags,
+        correspondent=req.paperless_correspondent,
+        created_year=req.paperless_created_year,
+    )
+    results = searcher.semantic_search(
+        req.query, req.top_k, req.expand_links,
+        paperless_doc_ids=doc_ids,
+    )
     if req.min_score > 0:
         results = [r for r in results if r["score"] >= req.min_score]
     results = [_enrich_source_url(r) for r in results]
@@ -215,7 +231,14 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
 )
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
-    results = searcher.keyword_search(req.query, req.top_k)
+    from .search import query_paperless_doc_ids
+
+    doc_ids = query_paperless_doc_ids(
+        tags=req.paperless_tags,
+        correspondent=req.paperless_correspondent,
+        created_year=req.paperless_created_year,
+    )
+    results = searcher.keyword_search(req.query, req.top_k, paperless_doc_ids=doc_ids)
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 
