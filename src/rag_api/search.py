@@ -55,10 +55,11 @@ class Searcher:
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
         )
+        has_text_filter = bool(paperless_tags or paperless_correspondent)
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
-            "n_results": min(top_k, self.collection.count() or 1),
+            "n_results": (self.collection.count() or 1) if has_text_filter else min(top_k, self.collection.count() or 1),
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
@@ -69,6 +70,12 @@ class Searcher:
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
             meta = results["metadatas"][0][i]
+            if has_text_filter and not _matches_paperless_text_filters(
+                meta,
+                tags=paperless_tags,
+                correspondent=paperless_correspondent,
+            ):
+                continue
             entry: dict = {
                 "file_path": meta["file_path"],
                 "section": meta.get("section", ""),
@@ -81,7 +88,7 @@ class Searcher:
                 entry["paperless_doc_id"] = meta["paperless_doc_id"]
             output.append(entry)
 
-        if expand_links:
+        if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
 
         return output[:top_k]
@@ -241,48 +248,71 @@ class Searcher:
             paperless_tags, paperless_correspondent, paperless_created_year,
         )
         has_filter = where is not None
+        has_text_filter = bool(paperless_tags or paperless_correspondent)
+
+        allowed_file_paths: Optional[set[str]] = None
+        if has_filter:
+            try:
+                filter_docs = self.collection.get(where=where, include=["metadatas"])
+                allowed_file_paths = {
+                    m.get("file_path", "")
+                    for m in (filter_docs.get("metadatas") or [])
+                    if m.get("file_path")
+                    and _matches_paperless_text_filters(
+                        m,
+                        tags=paperless_tags,
+                        correspondent=paperless_correspondent,
+                    )
+                }
+            except Exception:
+                allowed_file_paths = set()
+            if not allowed_file_paths:
+                return []
 
         query_lower = query.lower()
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
         results: list[dict] = []
         seen: set[str] = set()
 
-        # 1) Filename matches — skip when Paperless filters are active
-        #    (ChromaDB content matching in step 2 covers those results)
-        if not has_filter:
-            for doc_key, source in self.indexer._file_sources.items():
-                fp = self.indexer._file_path_from_key(doc_key)
-                if query_lower not in fp.lower():
+        # 1) Filename matches
+        for doc_key, source in self.indexer._file_sources.items():
+            fp = self.indexer._file_path_from_key(doc_key)
+            if query_lower not in fp.lower():
+                continue
+            if has_filter:
+                if source != "paperless":
                     continue
-                if source == "paperless" or not fp.endswith(".md"):
-                    # PDFs are binary; content is already in ChromaDB (step 2)
-                    results.append(
-                        {
-                            "file_path": fp,
-                            "section": "",
-                            "content": "",
-                            "score": 1.0,
-                            "match_type": "filename",
-                            "source": source,
-                        }
-                    )
-                    seen.add(f"{source}::{fp}")
+                if allowed_file_paths is not None and fp not in allowed_file_paths:
                     continue
-                base = Path(VAULT_PATH)
-                full_path = base / fp
-                if full_path.exists():
-                    content = full_path.read_text(encoding="utf-8", errors="ignore")
-                    results.append(
-                        {
-                            "file_path": fp,
-                            "section": "",
-                            "content": content[:1000],
-                            "score": 1.0,
-                            "match_type": "filename",
-                            "source": source,
-                        }
-                    )
-                    seen.add(f"{source}::{fp}")
+            if source == "paperless" or not fp.endswith(".md"):
+                # PDFs are binary; content is already in ChromaDB (step 2)
+                results.append(
+                    {
+                        "file_path": fp,
+                        "section": "",
+                        "content": "",
+                        "score": 1.0,
+                        "match_type": "filename",
+                        "source": source,
+                    }
+                )
+                seen.add(f"{source}::{fp}")
+                continue
+            base = Path(VAULT_PATH)
+            full_path = base / fp
+            if full_path.exists():
+                content = full_path.read_text(encoding="utf-8", errors="ignore")
+                results.append(
+                    {
+                        "file_path": fp,
+                        "section": "",
+                        "content": content[:1000],
+                        "score": 1.0,
+                        "match_type": "filename",
+                        "source": source,
+                    }
+                )
+                seen.add(f"{source}::{fp}")
 
         # 2) Content matches — always case-insensitive via full scan
         try:
@@ -294,6 +324,14 @@ class Searcher:
                 if query_lower not in doc.lower():
                     continue
                 meta = all_docs["metadatas"][i]
+                if has_filter and allowed_file_paths is not None and meta.get("file_path") not in allowed_file_paths:
+                    continue
+                if has_text_filter and not _matches_paperless_text_filters(
+                    meta,
+                    tags=paperless_tags,
+                    correspondent=paperless_correspondent,
+                ):
+                    continue
                 key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                 if key in seen:
                     continue
@@ -392,11 +430,10 @@ def _build_chromadb_filters(
     correspondent: Optional[str] = None,
     created_year: Optional[int] = None,
 ) -> Optional[dict]:
-    """Build a ChromaDB ``where`` filter from Paperless filter parameters.
+    """Build a coarse ChromaDB ``where`` filter from Paperless parameters.
 
-    Returns ``None`` when no filters are given (= search everything).
-    Filters use metadata fields stored at index time so no Paperless API
-    call is needed.
+    Text filters (tags/correspondent) are applied as case-insensitive
+    substring checks in Python to preserve partial-match semantics.
     """
     if not any([tags, correspondent, created_year]):
         return None
@@ -405,10 +442,28 @@ def _build_chromadb_filters(
 
     if created_year is not None:
         conditions.append({"created_year": created_year})
-    if correspondent:
-        conditions.append({"correspondent_name": correspondent.lower()})
-    if tags:
-        for tag in tags:
-            conditions.append({f"ptag_{tag.lower()}": 1})
 
     return {"$and": conditions} if len(conditions) > 1 else conditions[0]
+
+
+def _matches_paperless_text_filters(
+    meta: dict,
+    tags: Optional[list[str]] = None,
+    correspondent: Optional[str] = None,
+) -> bool:
+    """True when Paperless text filters match metadata via CI substring."""
+    if meta.get("source") != "paperless":
+        return False
+
+    if correspondent:
+        corr_val = str(meta.get("correspondent_name") or meta.get("correspondent") or "").lower()
+        if correspondent.lower() not in corr_val:
+            return False
+
+    if tags:
+        tag_values = str(meta.get("tag_names") or meta.get("tags") or "").lower()
+        for tag in tags:
+            if tag.lower() not in tag_values:
+                return False
+
+    return True

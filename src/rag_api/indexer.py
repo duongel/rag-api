@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Sequence, Union
 
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 64
 _PAPERLESS_TAG_NAME_CACHE: dict[str, str] = {}
-_PAPERLESS_CORRESPONDENT_CACHE: dict[str, str] = {}
+_PAPERLESS_CORRESPONDENT_CACHE: dict[str, tuple[str, float]] = {}
+_PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = 300.0
 
 
 class Indexer:
@@ -702,12 +704,14 @@ def _paperless_tag_names(
 def _paperless_correspondent_name(
     corr_id: Union[int, str], paperless_url: str, token: str
 ) -> str:
-    """Resolve a Paperless correspondent ID to its display name, with caching."""
+    """Resolve a Paperless correspondent ID to its display name, with TTL cache."""
     import requests
 
     cid = str(corr_id)
-    if cid in _PAPERLESS_CORRESPONDENT_CACHE:
-        return _PAPERLESS_CORRESPONDENT_CACHE[cid]
+    now = time.monotonic()
+    cached = _PAPERLESS_CORRESPONDENT_CACHE.get(cid)
+    if cached and now - cached[1] < _PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS:
+        return cached[0]
 
     try:
         resp = requests.get(
@@ -718,8 +722,8 @@ def _paperless_correspondent_name(
         if resp.ok:
             name = str(resp.json().get("name", "")).strip()
             if name:
-                _PAPERLESS_CORRESPONDENT_CACHE[cid] = name
+                _PAPERLESS_CORRESPONDENT_CACHE[cid] = (name, now)
                 return name
     except Exception:
         pass
-    return ""
+    return cached[0] if cached else ""
