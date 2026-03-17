@@ -42,6 +42,8 @@ class Indexer:
         self.link_graph = LinkGraph()
         # Lock for thread-safe dict updates during concurrent reindex
         self._lock = threading.Lock()
+        # Lock for serialising ChromaDB writes (PersistentClient is not thread-safe)
+        self._db_lock = threading.Lock()
         self._load_file_hashes()
 
     @staticmethod
@@ -261,12 +263,13 @@ class Indexer:
             for i, c in enumerate(chunks)
         ]
 
-        self.collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=metadatas,
-        )
+        with self._db_lock:
+            self.collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas,
+            )
 
         with self._lock:
             self._file_hashes[doc_key] = content_hash
@@ -279,28 +282,29 @@ class Indexer:
     def remove_file(self, file_path: str, source: str = "obsidian"):
         """Remove all chunks belonging to *file_path* from the index."""
         doc_key = self._doc_key(source, file_path)
-        try:
-            # Current-style chunks: have an explicit source field.
-            self.collection.delete(where={"$and": [{"file_path": file_path}, {"source": source}]})
-        except Exception:
-            pass
-        try:
-            # Legacy chunks (pre-source schema): no source field stored.
-            # Fetch by file_path, then delete only IDs that lack a source field
-            # to avoid accidentally removing same-path chunks from the other source.
-            results = self.collection.get(
-                where={"file_path": {"$eq": file_path}},
-                include=["metadatas"],
-            )
-            legacy_ids = [
-                id_
-                for id_, meta in zip(results["ids"], results["metadatas"])
-                if "source" not in meta
-            ]
-            if legacy_ids:
-                self.collection.delete(ids=legacy_ids)
-        except Exception:
-            pass
+        with self._db_lock:
+            try:
+                # Current-style chunks: have an explicit source field.
+                self.collection.delete(where={"$and": [{"file_path": file_path}, {"source": source}]})
+            except Exception:
+                pass
+            try:
+                # Legacy chunks (pre-source schema): no source field stored.
+                # Fetch by file_path, then delete only IDs that lack a source field
+                # to avoid accidentally removing same-path chunks from the other source.
+                results = self.collection.get(
+                    where={"file_path": {"$eq": file_path}},
+                    include=["metadatas"],
+                )
+                legacy_ids = [
+                    id_
+                    for id_, meta in zip(results["ids"], results["metadatas"])
+                    if "source" not in meta
+                ]
+                if legacy_ids:
+                    self.collection.delete(ids=legacy_ids)
+            except Exception:
+                pass
         with self._lock:
             self._file_hashes.pop(doc_key, None)
             self._file_sources.pop(doc_key, None)
@@ -436,11 +440,10 @@ class Indexer:
         processed_counter = [0]  # mutable for closure access
         counter_lock = threading.Lock()
 
-        def _index_one(doc: dict) -> Optional[str]:
+        def _index_one(doc: dict) -> tuple:
             """Index a single doc; called from thread pool.
 
-            Returns the actual file_path used for indexing (after potential
-            detail resolution), or None if the doc was skipped/failed.
+            Returns (file_path, was_changed) tuple.
             """
             # List responses may omit content; fetch individual doc details.
             if "content" not in doc and doc.get("id") is not None:
@@ -455,8 +458,8 @@ class Indexer:
                 except Exception as e:
                     logger.warning("Failed to fetch detail for doc %s: %s", doc["id"], e)
             fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
-            self.index_paperless_doc(doc)
-            return fp
+            changed = self.index_paperless_doc(doc)
+            return (fp, changed)
 
         workers = max(1, PAPERLESS_REINDEX_WORKERS)
         logger.info("Indexing with %d worker(s)", workers)
@@ -466,9 +469,9 @@ class Indexer:
             for future in as_completed(futures):
                 doc = futures[future]
                 try:
-                    fp = future.result()
-                    if fp:
-                        indexed_file_paths.add(fp)
+                    fp, changed = future.result()
+                    indexed_file_paths.add(fp)
+                    if changed:
                         count += 1
                 except Exception as e:
                     logger.error("Error indexing paperless doc %s: %s", doc.get("id"), e)
@@ -557,19 +560,24 @@ class Indexer:
 
     def _remove_all_paths_for_paperless_doc(self, doc_id: int):
         """Remove all indexed paths associated with a Paperless document ID."""
-        self._paperless_doc_paths.pop(str(doc_id), None)
-        try:
-            results = self.collection.get(
-                where={"paperless_doc_id": str(doc_id)},
-                include=["metadatas"],
-            )
-            if results["ids"]:
-                for m in results["metadatas"]:
-                    fp = m.get("file_path", "")
-                    if fp:
-                        self.remove_file(fp, source="paperless")
-        except Exception:
-            pass
+        with self._lock:
+            self._paperless_doc_paths.pop(str(doc_id), None)
+        paths_to_remove: list[str] = []
+        with self._db_lock:
+            try:
+                results = self.collection.get(
+                    where={"paperless_doc_id": str(doc_id)},
+                    include=["metadatas"],
+                )
+                if results["ids"]:
+                    for m in results["metadatas"]:
+                        fp = m.get("file_path", "")
+                        if fp:
+                            paths_to_remove.append(fp)
+            except Exception:
+                pass
+        for fp in paths_to_remove:
+            self.remove_file(fp, source="paperless")
 
     def _cleanup_deleted(self, source: str = "obsidian", base_path: Optional[str] = None):
         """Remove index entries whose source file no longer exists."""
