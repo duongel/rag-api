@@ -185,6 +185,11 @@ class Indexer:
         tags = doc.get("tags", [])
         if tags:
             meta["tags"] = ",".join(str(t) for t in tags)
+            from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+            if PAPERLESS_URL and PAPERLESS_TOKEN:
+                tag_names = _paperless_tag_names(tags, PAPERLESS_URL, PAPERLESS_TOKEN)
+                if tag_names:
+                    meta["tag_names"] = ", ".join(tag_names)
         if doc.get("created"):
             meta["created"] = doc["created"]
 
