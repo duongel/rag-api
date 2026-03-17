@@ -30,7 +30,7 @@ class Indexer:
         self._file_hashes: dict[str, str] = {}
         # Maps file_path key → source ("obsidian" | "paperless")
         self._file_sources: dict[str, str] = {}
-                # Tracks API document signatures (content + indexed metadata) for Paperless docs
+        # Tracks API document signatures (content + indexed metadata) for Paperless docs
         self._api_content_hashes: dict[str, str] = {}
         # Maps paperless doc_id (str) → currently indexed file_path for O(1) rename detection
         self._paperless_doc_paths: dict[str, str] = {}
