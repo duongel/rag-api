@@ -254,6 +254,9 @@ class Searcher:
             fp = self.indexer._file_path_from_key(doc_key)
             if query_lower not in fp.lower():
                 continue
+            # When Paperless filters are active, skip non-matching files
+            if allowed_doc_ids is not None and source != "paperless":
+                continue
             if source == "paperless" or not fp.endswith(".md"):
                 # PDFs are binary; content is already in ChromaDB (step 2)
                 results.append(
@@ -413,7 +416,39 @@ def query_paperless_doc_ids(
 
     params: dict = {"fields": "id", "page_size": 500}
     if tags:
-        params["tags__name__icontains"] = tags
+        # tags__name__icontains accepts a single string; for multiple tags
+        # we issue one query per tag and intersect the results.
+        if len(tags) == 1:
+            params["tags__name__icontains"] = tags[0]
+        else:
+            # Multiple tags → intersect doc IDs from individual queries
+            id_sets: list[set[str]] = []
+            for tag in tags:
+                tag_params = dict(params)
+                tag_params["tags__name__icontains"] = tag
+                if correspondent:
+                    tag_params["correspondent__name__icontains"] = correspondent
+                if created_year:
+                    tag_params["created__year"] = created_year
+                try:
+                    resp = requests.get(
+                        f"{PAPERLESS_URL}/api/documents/",
+                        params=tag_params,
+                        headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
+                        timeout=10,
+                    )
+                    if not resp.ok:
+                        logger.warning("Paperless filter query failed: %s", resp.status_code)
+                        return None
+                    data = resp.json()
+                    id_sets.append({str(doc["id"]) for doc in data.get("results", [])})
+                except Exception:
+                    logger.exception("Paperless filter query error")
+                    return None
+            result_ids = id_sets[0]
+            for s in id_sets[1:]:
+                result_ids &= s
+            return sorted(result_ids)
     if correspondent:
         params["correspondent__name__icontains"] = correspondent
     if created_year:
