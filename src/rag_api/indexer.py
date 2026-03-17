@@ -565,7 +565,7 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
     tag_value = meta.get("tag_names") or meta.get("tags")
     if tag_value:
         tag_line = f"Tags: {tag_value}"
-        lines.extend([tag_line] * 3)
+        lines.extend([tag_line] * 5)
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
