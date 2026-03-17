@@ -1,8 +1,11 @@
 """Indexer: manages the ChromaDB collection and incremental updates."""
 
 import hashlib
+import json
 import logging
+import time
 from pathlib import Path
+from typing import List, Optional, Sequence, Union
 
 import chromadb
 
@@ -15,6 +18,9 @@ from .embeddings import embed_documents
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 64
+_PAPERLESS_TAG_NAME_CACHE: dict[str, tuple[str, float]] = {}
+_PAPERLESS_CORRESPONDENT_CACHE: dict[str, tuple[str, float]] = {}
+_PAPERLESS_CACHE_TTL_SECONDS = 300.0
 
 
 class Indexer:
@@ -27,7 +33,7 @@ class Indexer:
         self._file_hashes: dict[str, str] = {}
         # Maps file_path key → source ("obsidian" | "paperless")
         self._file_sources: dict[str, str] = {}
-        # Tracks API content hashes separately for Paperless documents
+        # Tracks API document signatures (content + indexed metadata) for Paperless docs
         self._api_content_hashes: dict[str, str] = {}
         # Maps paperless doc_id (str) → currently indexed file_path for O(1) rename detection
         self._paperless_doc_paths: dict[str, str] = {}
@@ -78,7 +84,7 @@ class Indexer:
     # Public API
     # ------------------------------------------------------------------
 
-    def index_file(self, file_path: str, base_path: str | None = None, source: str = "obsidian") -> bool:
+    def index_file(self, file_path: str, base_path: Optional[str] = None, source: str = "obsidian") -> bool:
         """Index / re-index a single Markdown or PDF file.
 
         *base_path* defaults to ``VAULT_PATH`` for obsidian files.
@@ -103,7 +109,6 @@ class Indexer:
 
         self.remove_file(file_path, source=source)
 
-        extra_meta: dict = {}
         if suffix == ".md":
             # Update link graph from raw content (before wikilink replacement)
             try:
@@ -132,7 +137,6 @@ class Indexer:
                 "file_hash": file_hash,
                 "chunk_index": i,
                 "source": source,
-                **extra_meta,
             }
             for i, c in enumerate(chunks)
         ]
@@ -171,35 +175,70 @@ class Indexer:
         file_path = doc.get("archive_filename") or f"paperless/{doc_id}.pdf"
         doc_key = self._doc_key("paperless", file_path)
 
+        meta: dict = {"paperless_doc_id": str(doc_id)}
+        from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+        if doc.get("title"):
+            meta["title"] = doc["title"]
+        if doc.get("correspondent"):
+            meta["correspondent"] = str(doc["correspondent"])
+            if PAPERLESS_URL and PAPERLESS_TOKEN:
+                corr_name = _paperless_correspondent_name(
+                    doc["correspondent"], PAPERLESS_URL, PAPERLESS_TOKEN
+                )
+                if corr_name:
+                    meta["correspondent_name"] = corr_name
+                    meta["correspondent_name_lc"] = corr_name.lower()
+        tags = doc.get("tags", [])
+        if tags:
+            meta["tags"] = ",".join(str(t) for t in tags)
+            if PAPERLESS_URL and PAPERLESS_TOKEN:
+                tag_names = _paperless_tag_names(tags, PAPERLESS_URL, PAPERLESS_TOKEN)
+                if tag_names:
+                    meta["tag_names"] = ", ".join(tag_names)
+                    for tn in tag_names:
+                        meta[f"ptag_{tn.lower()}"] = 1
+        if doc.get("created"):
+            meta["created"] = doc["created"]
+            try:
+                meta["created_year"] = int(doc["created"][:4])
+            except (ValueError, IndexError):
+                pass
+
         content_hash = hashlib.sha256(content.encode()).hexdigest()
+        api_doc_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "content": content,
+                    "title": meta.get("title"),
+                    "correspondent": meta.get("correspondent"),
+                    "correspondent_name": meta.get("correspondent_name"),
+                    "correspondent_name_lc": meta.get("correspondent_name_lc"),
+                    "tags": meta.get("tags"),
+                    "tag_names": meta.get("tag_names"),
+                    "created": meta.get("created"),
+                    "created_year": meta.get("created_year"),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
 
         # O(1) rename detection: check if this doc_id was previously indexed under a different path
         prev_path = self._paperless_doc_paths.get(str(doc_id))
         path_changed = prev_path is not None and prev_path != file_path
 
-        if not path_changed and self._api_content_hashes.get(doc_key) == content_hash:
+        if not path_changed and self._api_content_hashes.get(doc_key) == api_doc_hash:
             return False  # unchanged
 
         # Remove all existing entries for this doc ID (handles renamed archive files)
         self._remove_all_paths_for_paperless_doc(doc_id)
         self.remove_file(file_path, source="paperless")
 
-        meta: dict = {"paperless_doc_id": str(doc_id)}
-        if doc.get("title"):
-            meta["title"] = doc["title"]
-        if doc.get("correspondent"):
-            meta["correspondent"] = str(doc["correspondent"])
-        tags = doc.get("tags", [])
-        if tags:
-            meta["tags"] = ",".join(str(t) for t in tags)
-        if doc.get("created"):
-            meta["created"] = doc["created"]
-
         chunks = parse_plaintext(file_path, content)
         if not chunks:
             return False
 
-        texts = [c.content for c in chunks]
+        texts = [_with_paperless_metadata_text(c.content, meta) for c in chunks]
         embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH):
             embeddings.extend(embed_documents(texts[i : i + _EMBED_BATCH]))
@@ -212,7 +251,7 @@ class Indexer:
                 "file_hash": content_hash,
                 "chunk_index": i,
                 "source": "paperless",
-                "api_content_hash": content_hash,
+                "api_content_hash": api_doc_hash,
                 **meta,
             }
             for i, c in enumerate(chunks)
@@ -227,7 +266,7 @@ class Indexer:
 
         self._file_hashes[doc_key] = content_hash
         self._file_sources[doc_key] = "paperless"
-        self._api_content_hashes[doc_key] = content_hash
+        self._api_content_hashes[doc_key] = api_doc_hash
         self._paperless_doc_paths[str(doc_id)] = file_path
         logger.info("Indexed paperless doc %s [%s] (%d chunks)", doc_id, file_path, len(chunks))
         return True
@@ -263,7 +302,7 @@ class Indexer:
         if source == "obsidian":
             self.link_graph.remove(file_path)
 
-    def full_reindex(self, base_path: str | None = None, source: str = "obsidian", on_progress=None) -> int:
+    def full_reindex(self, base_path: Optional[str] = None, source: str = "obsidian", on_progress=None) -> int:
         """Walk *base_path* (default: VAULT_PATH) and index every ``.md`` and ``.pdf`` file.
 
         For ``source="paperless"`` with ``PAPERLESS_URL`` configured, fetches
@@ -334,6 +373,10 @@ class Indexer:
         if not PAPERLESS_URL or not PAPERLESS_TOKEN:
             logger.warning("Paperless API not configured — skipping reindex")
             return 0
+
+        # Clear caches so renamed tags/correspondents are picked up on each reindex
+        _PAPERLESS_TAG_NAME_CACHE.clear()
+        _PAPERLESS_CORRESPONDENT_CACHE.clear()
 
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
@@ -496,7 +539,7 @@ class Indexer:
         except Exception:
             pass
 
-    def _cleanup_deleted(self, source: str = "obsidian", base_path: str | None = None):
+    def _cleanup_deleted(self, source: str = "obsidian", base_path: Optional[str] = None):
         """Remove index entries whose source file no longer exists."""
         root = Path(base_path or self._base_path_for_source(source))
         for doc_key in list(self._file_hashes):
@@ -516,3 +559,126 @@ class Indexer:
             "paperless_files": paperless_count,
             "link_graph_edges": len(self.link_graph),
         }
+
+
+# ---------------------------------------------------------------------------
+# Optional Paperless API metadata enrichment
+# ---------------------------------------------------------------------------
+
+def _with_paperless_metadata_text(content: str, meta: dict) -> str:
+    """Prefix chunk text with human-readable Paperless metadata when present.
+
+    This lets semantic + keyword retrieval match tags/title/correspondent even
+    if these terms do not appear in the OCR-extracted PDF body.
+
+    Tags are repeated to give them more weight in the embedding — a single
+    mention would be <1 % of a typical 1500-char chunk and easily drowned out
+    by unrelated OCR text.
+    """
+    lines: list[str] = []
+    if meta.get("title"):
+        lines.append(f"Title: {meta['title']}")
+    corr_display = meta.get("correspondent_name") or meta.get("correspondent")
+    if corr_display:
+        lines.append(f"Correspondent: {corr_display}")
+    tag_value = meta.get("tag_names") or meta.get("tags")
+    if tag_value:
+        tag_line = f"Tags: {tag_value}"
+        lines.extend([tag_line] * 5)
+    if not lines:
+        return content
+    return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
+
+
+def _paperless_tag_names(
+    tag_ids: Sequence[Union[int, str]], paperless_url: str, token: str
+) -> List[str]:
+    """Resolve Paperless tag IDs to names with an in-memory cache.
+
+    Uncached IDs are fetched in a single batch request via
+    ``GET /api/tags/?id__in=…`` to avoid N+1 round-trips during initial
+    indexing.  Falls back to individual lookups on failure.
+    """
+    import requests
+
+    now = time.monotonic()
+
+    # Split into cached hits and IDs that still need resolving
+    uncached_ids: list[str] = []
+    for raw_tag_id in tag_ids:
+        tag_id = str(raw_tag_id)
+        cached = _PAPERLESS_TAG_NAME_CACHE.get(tag_id)
+        if not cached or now - cached[1] >= _PAPERLESS_CACHE_TTL_SECONDS:
+            uncached_ids.append(tag_id)
+
+    # Batch-fetch uncached tags in one request
+    if uncached_ids:
+        try:
+            resp = requests.get(
+                f"{paperless_url}/api/tags/",
+                params={"id__in": ",".join(uncached_ids), "page_size": len(uncached_ids)},
+                headers={"Authorization": f"Token {token}"},
+                timeout=10,
+            )
+            if resp.ok:
+                for tag in resp.json().get("results", []):
+                    tid = str(tag.get("id", ""))
+                    name = str(tag.get("name", "")).strip()
+                    if tid and name:
+                        _PAPERLESS_TAG_NAME_CACHE[tid] = (name, now)
+        except Exception:
+            pass  # fall through to per-ID lookups below
+
+        # Individual fallback for any IDs still missing after batch
+        for tag_id in uncached_ids:
+            if tag_id in _PAPERLESS_TAG_NAME_CACHE and now - _PAPERLESS_TAG_NAME_CACHE[tag_id][1] < _PAPERLESS_CACHE_TTL_SECONDS:
+                continue
+            try:
+                resp = requests.get(
+                    f"{paperless_url}/api/tags/{tag_id}/",
+                    headers={"Authorization": f"Token {token}"},
+                    timeout=5,
+                )
+                if not resp.ok:
+                    continue
+                name = str(resp.json().get("name", "")).strip()
+                if name:
+                    _PAPERLESS_TAG_NAME_CACHE[tag_id] = (name, now)
+            except Exception:
+                continue
+
+    # Build result list preserving input order
+    names: list[str] = []
+    for raw_tag_id in tag_ids:
+        cached = _PAPERLESS_TAG_NAME_CACHE.get(str(raw_tag_id))
+        if cached:
+            names.append(cached[0])
+    return names
+
+
+def _paperless_correspondent_name(
+    corr_id: Union[int, str], paperless_url: str, token: str
+) -> str:
+    """Resolve a Paperless correspondent ID to its display name, with TTL cache."""
+    import requests
+
+    cid = str(corr_id)
+    now = time.monotonic()
+    cached = _PAPERLESS_CORRESPONDENT_CACHE.get(cid)
+    if cached and now - cached[1] < _PAPERLESS_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        resp = requests.get(
+            f"{paperless_url}/api/correspondents/{cid}/",
+            headers={"Authorization": f"Token {token}"},
+            timeout=5,
+        )
+        if resp.ok:
+            name = str(resp.json().get("name", "")).strip()
+            if name:
+                _PAPERLESS_CORRESPONDENT_CACHE[cid] = (name, now)
+                return name
+    except Exception:
+        pass
+    return cached[0] if cached else ""

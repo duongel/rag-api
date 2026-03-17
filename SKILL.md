@@ -8,7 +8,7 @@ It is intended for trusted clients that authenticate with a bearer token.
 ## Base URL
 
 ```
-http://localhost:8484
+http://127.0.0.1:8484
 ```
 
 Internal-only Docker deployments can use:
@@ -20,9 +20,9 @@ http://rag-api:8080
 **Agent integration:**
 | Format | URL |
 |---|---|
-| This document (Markdown) | `http://localhost:8484/skill` |
-| OpenAPI 3.x spec (GPT Actions, LangChain, …) | `http://localhost:8484/openapi.json` |
-| Swagger UI | `http://localhost:8484/docs` |
+| This document (Markdown) | `http://127.0.0.1:8484/skill` |
+| OpenAPI 3.x spec (GPT Actions, LangChain, …) | `http://127.0.0.1:8484/openapi.json` |
+| Swagger UI | `http://127.0.0.1:8484/docs` |
 
 ## Authentication
 
@@ -65,14 +65,17 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
     "type": "function",
     "function": {
       "name": "search_notes",
-      "description": "Semantic search in an Obsidian vault. Use for concepts, explanations, broad topics, and questions where wording may differ from the notes.",
+      "description": "Semantic search in an Obsidian vault and Paperless-NGX. Use for concepts, explanations, broad topics, and questions where wording may differ from the notes. When the user mentions specific Paperless tags, correspondents, or years, pass them as filters to narrow results before semantic ranking.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "description": "Natural-language search query." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "default": true },
-          "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." }
+          "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive). Example: [\"etron\", \"rechnung\"]" },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year. Example: 2025" }
         },
         "required": ["query"]
       }
@@ -82,12 +85,15 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
     "type": "function",
     "function": {
       "name": "keyword_search_notes",
-      "description": "Exact text search in filenames and note content. Use for abbreviations, URLs, class names, enum values, identifiers, and exact strings.",
+      "description": "Exact text search in filenames and note content. Use for abbreviations, URLs, class names, enum values, identifiers, and exact strings. Supports Paperless filters to narrow results.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
-          "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 }
+          "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
       }
@@ -128,26 +134,32 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
 [
   {
     "name": "search_notes",
-    "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+    "description": "Semantic search in the Obsidian vault and Paperless-NGX. Best for concepts, explanations, broad topics, and fuzzy user questions. When the user mentions specific Paperless tags, correspondents, or years, pass them as filters.",
     "input_schema": {
       "type": "object",
       "properties": {
         "query": { "type": "string" },
         "top_k": { "type": "integer", "default": 5 },
         "expand_links": { "type": "boolean", "default": true },
-        "min_score": { "type": "number", "default": 0.0 }
+        "min_score": { "type": "number", "default": 0.0 },
+        "paperless_tags": { "type": "array", "items": { "type": "string" } },
+        "paperless_correspondent": { "type": "string" },
+        "paperless_created_year": { "type": "integer" }
       },
       "required": ["query"]
     }
   },
   {
     "name": "keyword_search_notes",
-    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values. Supports Paperless filters.",
     "input_schema": {
       "type": "object",
       "properties": {
         "query": { "type": "string" },
-        "top_k": { "type": "integer", "default": 5 }
+        "top_k": { "type": "integer", "default": 5 },
+        "paperless_tags": { "type": "array", "items": { "type": "string" } },
+        "paperless_correspondent": { "type": "string" },
+        "paperless_created_year": { "type": "integer" }
       },
       "required": ["query"]
     }
@@ -175,26 +187,32 @@ This format is for Google Gemini setups using `function_declarations`.
   "function_declarations": [
     {
       "name": "search_notes",
-      "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+      "description": "Semantic search in the Obsidian vault and Paperless-NGX. Best for concepts, explanations, broad topics, and fuzzy user questions. When the user mentions specific Paperless tags, correspondents, or years, pass them as filters.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "description": "Natural-language search query." },
           "top_k": { "type": "integer", "description": "Maximum number of results." },
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags." },
-          "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." }
+          "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
       }
     },
     {
       "name": "keyword_search_notes",
-      "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+      "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values. Supports Paperless filters.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
-          "top_k": { "type": "integer", "description": "Maximum number of results." }
+          "top_k": { "type": "integer", "description": "Maximum number of results." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." }
         },
         "required": ["query"]
       }
@@ -222,20 +240,26 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
 [
   {
     "name": "search_notes",
-    "description": "Semantic search in the Obsidian vault. Best for concepts, explanations, broad topics, and fuzzy user questions.",
+    "description": "Semantic search in the Obsidian vault and Paperless-NGX. Best for concepts, explanations, broad topics, and fuzzy user questions. When the user mentions specific Paperless tags, correspondents, or years, pass them as filters.",
     "parameter_definitions": {
       "query": { "type": "str", "description": "Natural-language search query.", "required": true },
       "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
       "expand_links": { "type": "bool", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "required": false },
-      "min_score": { "type": "float", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions.", "required": false }
+      "min_score": { "type": "float", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions.", "required": false },
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive).", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive).", "required": false },
+      "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year.", "required": false }
     }
   },
   {
     "name": "keyword_search_notes",
-    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values.",
+    "description": "Exact keyword search in filenames and content. Best for abbreviations, URLs, identifiers, class names, and enum values. Supports Paperless filters.",
     "parameter_definitions": {
       "query": { "type": "str", "description": "Exact search string.", "required": true },
-      "top_k": { "type": "int", "description": "Maximum number of results.", "required": false }
+      "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive).", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive).", "required": false },
+      "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year.", "required": false }
     }
   },
   {
@@ -288,7 +312,7 @@ This matrix evaluates what works with minimal setup.
 - `SKILL.md` is sufficient if the agent can make local HTTP requests or map them through built-in tools.
 - `OpenAPI` is the simplest integration path without MCP, if the agent can import external APIs.
 - `localhost` is only directly usable if the agent runs on your machine or in the same local runtime.
-- For cloud agents, replace `http://localhost:8484` with a reachable `https` URL.
+- For cloud agents, replace `http://127.0.0.1:8484` with a reachable `https` URL.
 - Without HTTP/tool access, `SKILL.md` is only a behavioral guide, not a real connection to the API.
 
 ## Available Endpoints
@@ -300,10 +324,18 @@ Searches for semantically similar note sections. Also returns linked and tag-con
 Use `min_score` to filter out irrelevant results (recommended: `0.72` for precise questions, `0.65` for broad topics).
 
 ```bash
-curl -s http://localhost:8484/search \
+curl -s http://127.0.0.1:8484/search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "How does the heat pump work?", "top_k": 5, "min_score": 0.70}'
+```
+
+**With Paperless filters** (pre-filter by tag and year, then rank semantically):
+```bash
+curl -s http://127.0.0.1:8484/search \
+  -H "Authorization: Bearer $API_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "alle Kosten", "top_k": 10, "paperless_tags": ["etron"], "paperless_created_year": 2025}'
 ```
 
 **Response:**
@@ -345,7 +377,7 @@ curl -s http://localhost:8484/search \
 Case-insensitive full-text search in filenames **and** note content. **Required for:** abbreviations, IDs, version numbers, hostnames, model names, configuration keys – anything that semantic search cannot find by exact spelling.
 
 ```bash
-curl -s http://localhost:8484/keyword-search \
+curl -s http://127.0.0.1:8484/keyword-search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "NanoHD", "top_k": 5}'
@@ -386,14 +418,14 @@ curl -s http://localhost:8484/keyword-search \
 Returns the full Markdown content of a single note.
 
 ```bash
-curl -s "http://localhost:8484/note?path=Home/Heating/Heatpump.md" \
+curl -s "http://127.0.0.1:8484/note?path=Home/Heating/Heatpump.md" \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 ```
 
 **POST variant** (for agents that use POST for all endpoints, e.g. n8n HTTP Request Tool):
 
 ```bash
-curl -s http://localhost:8484/note \
+curl -s http://127.0.0.1:8484/note \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"path": "Home/Heating/Heatpump.md"}'
@@ -402,14 +434,14 @@ curl -s http://localhost:8484/note \
 ### 4. Trigger Reindex
 
 ```bash
-curl -s -X POST http://localhost:8484/reindex \
+curl -s -X POST http://127.0.0.1:8484/reindex \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 ```
 
 ### 5. Indexing Status
 
 ```bash
-curl -s http://localhost:8484/status \
+curl -s http://127.0.0.1:8484/status \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 # → {"indexing": false, "indexed_files": 95}
 ```
@@ -417,7 +449,7 @@ curl -s http://localhost:8484/status \
 ### 6. Statistics
 
 ```bash
-curl -s http://localhost:8484/stats \
+curl -s http://127.0.0.1:8484/stats \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 # → {"total_chunks": 187, "total_files": 95, "link_graph_edges": 42}
 ```
@@ -425,7 +457,7 @@ curl -s http://localhost:8484/stats \
 ### 7. Health Check
 
 ```bash
-curl -s http://localhost:8484/health
+curl -s http://127.0.0.1:8484/health
 ```
 
 ## Search Strategy for Agents
@@ -444,6 +476,22 @@ curl -s http://localhost:8484/health
 | Class names, enum values | `/keyword-search` | `"SensorType"`, `"ContentType"` |
 | Broad topic with context | `/search` with `top_k: 10` | "Everything about network segmentation" |
 | Specific file known | `/note` | direct path |
+| Paperless docs by tag/year/correspondent | `/search` with filters | `paperless_tags: ["etron"]` |
+
+### When to Use Paperless Filters
+
+Use `paperless_tags`, `paperless_correspondent`, or `paperless_created_year` when the user's question implies structured criteria that map to Paperless metadata:
+
+| User says | Filter to set |
+|---|---|
+| "alle Rechnungen für Audi e-tron in 2025" | `paperless_tags: ["etron"]`, `paperless_created_year: 2025` |
+| "Dokumente von Stadtwerke" | `paperless_correspondent: "Stadtwerke"` |
+| "Versicherungsdokumente 2024" | `paperless_tags: ["versicherung"]`, `paperless_created_year: 2024` |
+| "Rechnungen von Telekom letztes Jahr" | `paperless_correspondent: "Telekom"`, `paperless_created_year: 2025` |
+
+**How it works:** Filters are matched directly against metadata stored in ChromaDB at index time (tag names, correspondent name, creation year). No additional Paperless API call is needed at search time — the semantic/keyword search simply adds ChromaDB `where` conditions to restrict results.
+
+**When NOT to use filters:** If the question is purely conceptual ("How does X work?") or doesn't reference specific Paperless tags, correspondents, or time periods, omit the filters entirely — they would unnecessarily restrict results.
 
 ### Recommended Order for Ambiguous Questions
 
@@ -470,4 +518,11 @@ Question: *"What VLAN strategy do I use for IoT devices?"*
 Question: *"Which Docker network does homeassistant use?"*
 ```
 1. keyword-search("homeassistant")   → exact match, even if the note has no prose
+```
+
+Question: *"Summiere alle Kosten für Audi e-tron in 2025"*
+```
+1. search("Kosten Rechnung", paperless_tags=["etron"], paperless_created_year=2025, top_k=20)
+   → pre-filters Paperless docs by tag + year, then semantically ranks by cost relevance
+2. get_note(<file_path>)   → loads full content for each result to extract amounts
 ```

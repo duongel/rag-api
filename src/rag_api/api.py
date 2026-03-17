@@ -3,10 +3,11 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Security, status
+from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from typing import Optional
 
 from urllib.parse import quote
 
@@ -54,13 +55,13 @@ def require_auth(
 
     if not API_BEARER_TOKEN:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication is enabled but API_BEARER_TOKEN is not configured.",
         )
 
     if credentials is None or credentials.credentials != API_BEARER_TOKEN:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
@@ -74,6 +75,9 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     expand_links: bool = True
     min_score: float = 0.0  # filter results below this threshold
+    paperless_tags: Optional[list[str]] = None
+    paperless_correspondent: Optional[str] = None
+    paperless_created_year: Optional[int] = None
 
 
 class SearchResult(BaseModel):
@@ -138,7 +142,7 @@ def _enrich_source_url(result: dict) -> dict:
                 doc_id = stem
         if doc_id:
             result["source_url"] = (
-                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(doc_id)}/details"
+                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(doc_id)}/document"
             )
     elif source == "obsidian":
         result["source_url"] = (
@@ -156,6 +160,7 @@ def get_skill():
     if _SKILL_PATH is None:
         raise HTTPException(status_code=404, detail="SKILL.md not found")
     content = _SKILL_PATH.read_text(encoding="utf-8")
+    content = content.replace("http://127.0.0.1:8484", PUBLIC_URL)
     content = content.replace("http://localhost:8484", PUBLIC_URL)
     return PlainTextResponse(content, media_type="text/markdown")
 
@@ -186,14 +191,21 @@ def stats(_: None = Security(require_auth)):
         "Results are graph-boosted: notes connected via wikilinks, backlinks, or shared tags "
         "are ranked higher when they are strongly linked to top semantic matches.\n\n"
         "`match_type` values: `semantic` | `link_1` | `backlink` | `tag` | `link_2`\n\n"
+        "**Paperless filters:** pass `paperless_tags`, `paperless_correspondent`, or "
+        "`paperless_created_year` to filter by metadata stored in ChromaDB before semantic ranking.\n\n"
         "**Use for:** conceptual questions, topics, explanations.\n\n"
-        "**Do NOT use for:** abbreviations, URLs, exact class/enum names → use `/keyword-search`.\n\n"
+        "**Do NOT use for:** abbreviations, URLs, exact class/enum names \u2192 use `/keyword-search`.\n\n"
         "Set `min_score: 0.70` to suppress low-confidence results."
     ),
 )
 def search(req: SearchRequest, _: None = Security(require_auth)):
     """Semantic similarity search across all indexed notes."""
-    results = searcher.semantic_search(req.query, req.top_k, req.expand_links)
+    results = searcher.semantic_search(
+        req.query, req.top_k, req.expand_links,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
+    )
     if req.min_score > 0:
         results = [r for r in results if r["score"] >= req.min_score]
     results = [_enrich_source_url(r) for r in results]
@@ -215,7 +227,12 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
 )
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
-    results = searcher.keyword_search(req.query, req.top_k)
+    results = searcher.keyword_search(
+        req.query, req.top_k,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
+    )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 
