@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/duongel/rag-api/compare/v1.8.0...v1.8.1) (2026-03-17)
+
+
+### Performance Improvements
+
+* prefetch all tags and correspondents before Paperless reindex ([feee539](https://github.com/duongel/rag-api/commit/feee53935555fdb7b27d7d2ee721c7f568f2ce02))
+
 # [1.8.0](https://github.com/duongel/rag-api/compare/v1.7.2...v1.8.0) (2026-03-17)
 
 
