@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -375,9 +376,9 @@ class Indexer:
     def _reindex_paperless_api(self, on_progress=None) -> int:
         """Fetch all Paperless documents via the REST API and index them.
 
-        Replaces the filesystem-based reindex with ~38 paginated API calls
-        (page_size=100) that cover *all* documents, including those without
-        an archive version.
+        Pages are fetched in parallel after the first request reveals the
+        total document count, cutting API latency from ~30-40 s to a few
+        seconds.  Tag and correspondent caches are pre-warmed concurrently.
         """
         from .config import PAPERLESS_URL, PAPERLESS_TOKEN
         if not PAPERLESS_URL or not PAPERLESS_TOKEN:
@@ -390,45 +391,115 @@ class Indexer:
 
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+        page_size = 500
+        fields = "id,content,archive_filename,title,correspondent,tags,created"
 
-        # Pre-warm caches: batch-fetch all tags and correspondents in 1-2 requests
-        _prefetch_all_tags(PAPERLESS_URL, PAPERLESS_TOKEN)
-        _prefetch_all_correspondents(PAPERLESS_URL, PAPERLESS_TOKEN)
+        # Pre-warm caches in parallel with the first document page fetch
+        with ThreadPoolExecutor(max_workers=3) as prefetch_pool:
+            tag_future = prefetch_pool.submit(
+                _prefetch_all_tags, PAPERLESS_URL, PAPERLESS_TOKEN
+            )
+            corr_future = prefetch_pool.submit(
+                _prefetch_all_correspondents, PAPERLESS_URL, PAPERLESS_TOKEN
+            )
 
-        # Phase 1: collect all documents from the API (large page_size to reduce roundtrips)
-        all_docs: list[dict] = []
-        page = 1
-        fetch_complete = False
-        while True:
+            # Fetch page 1 to discover total count
+            page1_future = prefetch_pool.submit(
+                requests.get,
+                f"{PAPERLESS_URL}/api/documents/",
+                params={"page": 1, "page_size": page_size, "fields": fields},
+                headers=headers,
+                timeout=30,
+            )
+
+            # Wait for all three
+            tag_future.result()
+            corr_future.result()
             try:
-                resp = requests.get(
-                    f"{PAPERLESS_URL}/api/documents/",
-                    params={
-                        "page": page,
-                        "page_size": 500,
-                        "fields": "id,content,archive_filename,title,correspondent,tags,created",
-                    },
-                    headers=headers,
-                    timeout=30,
-                )
+                resp = page1_future.result()
             except Exception as e:
-                logger.error("Paperless API request failed: %s", e)
-                break
-            if not resp.ok:
-                logger.error("Paperless API returned %d", resp.status_code)
-                break
-            data = resp.json()
-            all_docs.extend(data.get("results", []))
-            if not data.get("next"):
+                logger.error("Paperless API request failed (page 1): %s", e)
+                return 0
+
+        if not resp.ok:
+            logger.error("Paperless API returned %d", resp.status_code)
+            return 0
+
+        data = resp.json()
+        all_docs: list[dict] = list(data.get("results", []))
+        total_count = data.get("count", len(all_docs))
+        total_pages = max(1, math.ceil(total_count / page_size))
+        fetch_complete = total_pages <= 1 and len(all_docs) >= total_count
+
+        # Phase 1b: fetch remaining pages in parallel
+        if total_pages > 1:
+            def _fetch_page(page_num: int) -> Optional[tuple]:
+                """Return (results, has_next) or None on failure."""
+                try:
+                    r = requests.get(
+                        f"{PAPERLESS_URL}/api/documents/",
+                        params={"page": page_num, "page_size": page_size, "fields": fields},
+                        headers=headers,
+                        timeout=30,
+                    )
+                    if r.ok:
+                        body = r.json()
+                        return (body.get("results", []), bool(body.get("next")))
+                    logger.error("Paperless API returned %d for page %d", r.status_code, page_num)
+                except Exception as e:
+                    logger.error("Paperless API request failed (page %d): %s", page_num, e)
+                return None
+
+            failed_pages = 0
+            has_more_pages = False
+            with ThreadPoolExecutor(max_workers=min(8, total_pages - 1)) as page_pool:
+                futures = {
+                    page_pool.submit(_fetch_page, p): p
+                    for p in range(2, total_pages + 1)
+                }
+                for future in as_completed(futures):
+                    outcome = future.result()
+                    if outcome is not None:
+                        results, has_next = outcome
+                        all_docs.extend(results)
+                        # Track if any page beyond our initial estimate exists
+                        page_num = futures[future]
+                        if page_num == total_pages and has_next:
+                            has_more_pages = True
+                    else:
+                        failed_pages += 1
+
+            # Follow any tail pages that appeared after our initial count snapshot
+            if has_more_pages and failed_pages == 0:
+                extra_page = total_pages + 1
+                while True:
+                    outcome = _fetch_page(extra_page)
+                    if outcome is None:
+                        failed_pages += 1
+                        break
+                    results, has_next = outcome
+                    all_docs.extend(results)
+                    if not has_next:
+                        break
+                    extra_page += 1
+                total_pages = extra_page
+
+            if failed_pages > 0:
+                fetch_complete = False
+            elif len(all_docs) < total_count:
+                logger.warning(
+                    "Expected %d documents but only received %d — marking fetch as incomplete",
+                    total_count, len(all_docs),
+                )
+                fetch_complete = False
+            else:
                 fetch_complete = True
-                break
-            page += 1
 
         if not all_docs and not fetch_complete:
             logger.warning("No documents returned from Paperless API (fetch incomplete)")
             return 0
 
-        logger.info("Fetched %d documents from Paperless API (%d pages)", len(all_docs), page)
+        logger.info("Fetched %d documents from Paperless API (%d pages)", len(all_docs), total_pages)
         total = len(all_docs)
 
         if on_progress:
@@ -495,7 +566,7 @@ class Indexer:
                     self.remove_file(fp, source="paperless")
                     logger.info("Removed deleted paperless doc from index: %s", fp)
         else:
-            logger.warning("Skipping cleanup — API fetch was incomplete (%d pages, %d docs)", page, len(all_docs))
+            logger.warning("Skipping cleanup — API fetch was incomplete (%d pages, %d docs)", total_pages, len(all_docs))
 
         logger.info("Full reindex [paperless] complete – %d docs updated.", count)
         return count
