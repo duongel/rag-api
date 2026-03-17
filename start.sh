@@ -14,8 +14,12 @@ _DEFAULT_RAG_API_SERVICE="rag-api"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ── Version (read from pyproject.toml) ────────────────────────────────────
+# ── Version (read from pyproject.toml, fall back to latest GitHub release tag) ─
 _VERSION=$(grep -m1 '^version' pyproject.toml 2>/dev/null | sed -n 's/.*"\(.*\)"/\1/p')
+if [[ -z "$_VERSION" ]]; then
+  _VERSION=$(curl -fsSL https://api.github.com/repos/duongel/rag-api/releases/latest 2>/dev/null \
+    | grep -m1 '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/') || true
+fi
 _VERSION="${_VERSION:-unknown}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────
