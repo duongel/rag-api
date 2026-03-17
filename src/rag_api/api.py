@@ -192,7 +192,7 @@ def stats(_: None = Security(require_auth)):
         "are ranked higher when they are strongly linked to top semantic matches.\n\n"
         "`match_type` values: `semantic` | `link_1` | `backlink` | `tag` | `link_2`\n\n"
         "**Paperless filters:** pass `paperless_tags`, `paperless_correspondent`, or "
-        "`paperless_created_year` to pre-filter via the Paperless API before semantic ranking.\n\n"
+        "`paperless_created_year` to filter by metadata stored in ChromaDB before semantic ranking.\n\n"
         "**Use for:** conceptual questions, topics, explanations.\n\n"
         "**Do NOT use for:** abbreviations, URLs, exact class/enum names \u2192 use `/keyword-search`.\n\n"
         "Set `min_score: 0.70` to suppress low-confidence results."
