@@ -14,6 +14,10 @@ _DEFAULT_RAG_API_SERVICE="rag-api"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Version (read from pyproject.toml) ────────────────────────────────────
+_VERSION=$(grep -m1 '^version' pyproject.toml 2>/dev/null | sed -n 's/.*"\(.*\)"/\1/p')
+_VERSION="${_VERSION:-unknown}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 # die() must be defined before argument parsing so unknown flags print a proper error.
 
@@ -208,7 +212,7 @@ done
 
 docker info > /dev/null 2>&1 || die "Docker is not running. Please start the Docker daemon and try again."
 
-echo -e "${BOLD}🚀 RAG API – Setup${NC}\n"
+echo -e "${BOLD}🚀 RAG API v${_VERSION} – Setup${NC}\n"
 
 # ── Interactive setup (skipped when an existing .env is reused) ───────────
 

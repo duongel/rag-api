@@ -49,4 +49,9 @@ POLL_INTERVAL = 5
 # inotify events are unreliable over the virtio/bind-mount layer.
 WATCHER_POLLING = os.environ.get("WATCHER_POLLING", "false").lower() in {"1", "true", "yes", "on"}
 
+# Number of worker threads for concurrent Paperless document embedding
+# during full reindex. Higher values speed up initial indexing but increase
+# Ollama load. Set to 1 to disable concurrency.
+PAPERLESS_REINDEX_WORKERS = int(os.environ.get("PAPERLESS_REINDEX_WORKERS", "4"))
+
 API_PORT = 8080
