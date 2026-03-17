@@ -1,6 +1,6 @@
-# Copilot Instructions
+# Agents
 
-<!-- Keep in sync with /AGENTS.md -->
+<!-- Keep in sync with .github/copilot-instructions.md -->
 
 ## Workflow
 
