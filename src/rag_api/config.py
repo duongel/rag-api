@@ -5,7 +5,7 @@ CHROMA_PATH = os.environ.get("CHROMA_PATH", "/app/data/chroma")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT_SECONDS = int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8484")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://127.0.0.1:8484")
 API_BEARER_TOKEN = os.environ.get("API_BEARER_TOKEN", "")
 AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true", "yes", "on"}
 
