@@ -15,6 +15,7 @@ from .embeddings import embed_documents
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 64
+_PAPERLESS_TAG_NAME_CACHE: dict[str, str] = {}
 
 
 class Indexer:
@@ -119,7 +120,10 @@ class Indexer:
         if not chunks:
             return False
 
-        texts = [c.content for c in chunks]
+        if source == "paperless" and extra_meta:
+            texts = [_with_paperless_metadata_text(c.content, extra_meta) for c in chunks]
+        else:
+            texts = [c.content for c in chunks]
         embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH):
             embeddings.extend(embed_documents(texts[i : i + _EMBED_BATCH]))
@@ -516,3 +520,102 @@ class Indexer:
             "paperless_files": paperless_count,
             "link_graph_edges": len(self.link_graph),
         }
+
+
+# ---------------------------------------------------------------------------
+# Optional Paperless API metadata enrichment
+# ---------------------------------------------------------------------------
+
+def _with_paperless_metadata_text(content: str, meta: dict) -> str:
+    """Prefix chunk text with human-readable Paperless metadata when present.
+
+    This lets semantic + keyword retrieval match tags/title/correspondent even
+    if these terms do not appear in the OCR-extracted PDF body.
+    """
+    lines: list[str] = []
+    if meta.get("title"):
+        lines.append(f"Title: {meta['title']}")
+    if meta.get("correspondent"):
+        lines.append(f"Correspondent: {meta['correspondent']}")
+    if meta.get("tag_names"):
+        lines.append(f"Tags: {meta['tag_names']}")
+    if not lines:
+        return content
+    return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
+
+
+def _paperless_api_meta(file_path: str) -> dict:
+    """Fetch document metadata from the Paperless REST API.
+
+    Called only when PAPERLESS_URL and PAPERLESS_TOKEN are configured.
+    Returns a dict with title/tags/correspondent keys, or {} on any failure.
+
+    Paperless archive filenames follow the pattern ``<pk>.pdf`` (or a custom
+    naming scheme). We derive the document ID from the stem and query the API.
+    """
+    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
+    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
+        return {}
+
+    stem = Path(file_path).stem
+    if not stem.isdigit():
+        return {}
+
+    import requests
+    try:
+        resp = requests.get(
+            f"{PAPERLESS_URL}/api/documents/{stem}/",
+            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
+            timeout=5,
+        )
+        if not resp.ok:
+            return {}
+        data = resp.json()
+        meta: dict = {}
+        if data.get("title"):
+            meta["title"] = data["title"]
+        if data.get("correspondent"):
+            meta["correspondent"] = str(data["correspondent"])
+        tags = data.get("tags", [])
+        if tags:
+            meta["tags"] = ",".join(str(t) for t in tags)
+            tag_names = _paperless_tag_names(tags, PAPERLESS_URL, PAPERLESS_TOKEN)
+            if tag_names:
+                meta["tag_names"] = ", ".join(tag_names)
+        if data.get("created"):
+            meta["created"] = data["created"]
+        return meta
+    except Exception:
+        return {}
+
+
+def _paperless_tag_names(tag_ids: list[int] | list[str], paperless_url: str, token: str) -> list[str]:
+    """Resolve Paperless tag IDs to names with an in-memory cache."""
+    import requests
+
+    names: list[str] = []
+    for raw_tag_id in tag_ids:
+        tag_id = str(raw_tag_id)
+        if tag_id in _PAPERLESS_TAG_NAME_CACHE:
+            cached = _PAPERLESS_TAG_NAME_CACHE[tag_id]
+            if cached:
+                names.append(cached)
+            continue
+
+        try:
+            resp = requests.get(
+                f"{paperless_url}/api/tags/{tag_id}/",
+                headers={"Authorization": f"Token {token}"},
+                timeout=5,
+            )
+            if not resp.ok:
+                _PAPERLESS_TAG_NAME_CACHE[tag_id] = ""
+                continue
+            name = str(resp.json().get("name", "")).strip()
+            _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
+            if name:
+                names.append(name)
+        except Exception:
+            _PAPERLESS_TAG_NAME_CACHE[tag_id] = ""
+
+    return names
