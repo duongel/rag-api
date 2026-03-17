@@ -191,7 +191,8 @@ class Indexer:
                     doc["correspondent"], PAPERLESS_URL, PAPERLESS_TOKEN
                 )
                 if corr_name:
-                    meta["correspondent_name"] = corr_name.lower()
+                    meta["correspondent_name"] = corr_name
+                    meta["correspondent_name_lc"] = corr_name.lower()
         tags = doc.get("tags", [])
         if tags:
             meta["tags"] = ",".join(str(t) for t in tags)
@@ -216,6 +217,7 @@ class Indexer:
                     "title": meta.get("title"),
                     "correspondent": meta.get("correspondent"),
                     "correspondent_name": meta.get("correspondent_name"),
+                    "correspondent_name_lc": meta.get("correspondent_name_lc"),
                     "tags": meta.get("tags"),
                     "tag_names": meta.get("tag_names"),
                     "created": meta.get("created"),
@@ -591,51 +593,6 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
-
-
-def _paperless_api_meta(file_path: str) -> dict:
-    """Fetch document metadata from the Paperless REST API.
-
-    Called only when PAPERLESS_URL and PAPERLESS_TOKEN are configured.
-    Returns a dict with title/tags/correspondent keys, or {} on any failure.
-
-    Paperless archive filenames follow the pattern ``<pk>.pdf`` (or a custom
-    naming scheme). We derive the document ID from the stem and query the API.
-    """
-    from .config import PAPERLESS_URL, PAPERLESS_TOKEN
-    if not PAPERLESS_URL or not PAPERLESS_TOKEN:
-        return {}
-
-    stem = Path(file_path).stem
-    if not stem.isdigit():
-        return {}
-
-    import requests
-    try:
-        resp = requests.get(
-            f"{PAPERLESS_URL}/api/documents/{stem}/",
-            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
-            timeout=5,
-        )
-        if not resp.ok:
-            return {}
-        data = resp.json()
-        meta: dict = {}
-        if data.get("title"):
-            meta["title"] = data["title"]
-        if data.get("correspondent"):
-            meta["correspondent"] = str(data["correspondent"])
-        tags = data.get("tags", [])
-        if tags:
-            meta["tags"] = ",".join(str(t) for t in tags)
-            tag_names = _paperless_tag_names(tags, PAPERLESS_URL, PAPERLESS_TOKEN)
-            if tag_names:
-                meta["tag_names"] = ", ".join(tag_names)
-        if data.get("created"):
-            meta["created"] = data["created"]
-        return meta
-    except Exception:
-        return {}
 
 
 def _paperless_tag_names(

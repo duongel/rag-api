@@ -55,11 +55,10 @@ class Searcher:
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
         )
-        has_text_filter = bool(paperless_tags or paperless_correspondent)
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
-            "n_results": (self.collection.count() or 1) if has_text_filter else min(top_k, self.collection.count() or 1),
+            "n_results": min(top_k, self.collection.count() or 1),
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
@@ -70,12 +69,6 @@ class Searcher:
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
             meta = results["metadatas"][0][i]
-            if has_text_filter and not _matches_paperless_text_filters(
-                meta,
-                tags=paperless_tags,
-                correspondent=paperless_correspondent,
-            ):
-                continue
             entry: dict = {
                 "file_path": meta["file_path"],
                 "section": meta.get("section", ""),
@@ -248,7 +241,6 @@ class Searcher:
             paperless_tags, paperless_correspondent, paperless_created_year,
         )
         has_filter = where is not None
-        has_text_filter = bool(paperless_tags or paperless_correspondent)
 
         allowed_file_paths: Optional[set[str]] = None
         if has_filter:
@@ -258,11 +250,6 @@ class Searcher:
                     m.get("file_path", "")
                     for m in (filter_docs.get("metadatas") or [])
                     if m.get("file_path")
-                    and _matches_paperless_text_filters(
-                        m,
-                        tags=paperless_tags,
-                        correspondent=paperless_correspondent,
-                    )
                 }
             except Exception:
                 allowed_file_paths = set()
@@ -324,14 +311,6 @@ class Searcher:
                 if query_lower not in doc.lower():
                     continue
                 meta = all_docs["metadatas"][i]
-                if has_filter and allowed_file_paths is not None and meta.get("file_path") not in allowed_file_paths:
-                    continue
-                if has_text_filter and not _matches_paperless_text_filters(
-                    meta,
-                    tags=paperless_tags,
-                    correspondent=paperless_correspondent,
-                ):
-                    continue
                 key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                 if key in seen:
                     continue
@@ -442,28 +421,10 @@ def _build_chromadb_filters(
 
     if created_year is not None:
         conditions.append({"created_year": created_year})
+    if correspondent:
+        conditions.append({"correspondent_name_lc": correspondent.lower()})
+    if tags:
+        for tag in tags:
+            conditions.append({f"ptag_{tag.lower()}": 1})
 
     return {"$and": conditions} if len(conditions) > 1 else conditions[0]
-
-
-def _matches_paperless_text_filters(
-    meta: dict,
-    tags: Optional[list[str]] = None,
-    correspondent: Optional[str] = None,
-) -> bool:
-    """True when Paperless text filters match metadata via CI substring."""
-    if meta.get("source") != "paperless":
-        return False
-
-    if correspondent:
-        corr_val = str(meta.get("correspondent_name") or meta.get("correspondent") or "").lower()
-        if correspondent.lower() not in corr_val:
-            return False
-
-    if tags:
-        tag_values = str(meta.get("tag_names") or meta.get("tags") or "").lower()
-        for tag in tags:
-            if tag.lower() not in tag_values:
-                return False
-
-    return True
