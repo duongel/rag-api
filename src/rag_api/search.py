@@ -193,7 +193,7 @@ class Searcher:
 
     def _best_chunk_for_file(
         self, file_path: str, query_embedding: list[float]
-    ) -> dict | None:
+    ) -> Optional[dict]:
         """Return the semantically closest chunk for a specific file."""
         try:
             res = self.collection.query(
@@ -357,7 +357,7 @@ class Searcher:
     # Single note retrieval
     # ------------------------------------------------------------------
 
-    def get_note(self, path: str) -> dict | None:
+    def get_note(self, path: str) -> Optional[dict]:
         """Return full content of a note by relative path.
 
         For Obsidian notes the file is read from disk.  For Paperless
@@ -376,7 +376,7 @@ class Searcher:
         # Fall back to ChromaDB (covers Paperless and any indexed-only docs)
         return self._get_note_from_index(path)
 
-    def _get_note_from_index(self, path: str) -> dict | None:
+    def _get_note_from_index(self, path: str) -> Optional[dict]:
         """Reassemble a document's content from its indexed chunks."""
         try:
             results = self.collection.get(
@@ -411,8 +411,9 @@ def _build_chromadb_filters(
 ) -> Optional[dict]:
     """Build a coarse ChromaDB ``where`` filter from Paperless parameters.
 
-    Text filters (tags/correspondent) are applied as case-insensitive
-    substring checks in Python to preserve partial-match semantics.
+    Tags are matched via ``ptag_<name>`` metadata keys (exact, case-insensitive).
+    Correspondent is matched via ``correspondent_name_lc`` (exact, case-insensitive).
+    Year is matched via ``created_year`` (exact integer equality).
     """
     if not any([tags, correspondent, created_year]):
         return None

@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import List, Sequence, Union
+from typing import List, Optional, Sequence, Union
 
 import chromadb
 
@@ -18,9 +18,9 @@ from .embeddings import embed_documents
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 64
-_PAPERLESS_TAG_NAME_CACHE: dict[str, str] = {}
+_PAPERLESS_TAG_NAME_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_CORRESPONDENT_CACHE: dict[str, tuple[str, float]] = {}
-_PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS = 300.0
+_PAPERLESS_CACHE_TTL_SECONDS = 300.0
 
 
 class Indexer:
@@ -84,7 +84,7 @@ class Indexer:
     # Public API
     # ------------------------------------------------------------------
 
-    def index_file(self, file_path: str, base_path: str | None = None, source: str = "obsidian") -> bool:
+    def index_file(self, file_path: str, base_path: Optional[str] = None, source: str = "obsidian") -> bool:
         """Index / re-index a single Markdown or PDF file.
 
         *base_path* defaults to ``VAULT_PATH`` for obsidian files.
@@ -109,7 +109,6 @@ class Indexer:
 
         self.remove_file(file_path, source=source)
 
-        extra_meta: dict = {}
         if suffix == ".md":
             # Update link graph from raw content (before wikilink replacement)
             try:
@@ -125,10 +124,7 @@ class Indexer:
         if not chunks:
             return False
 
-        if source == "paperless" and extra_meta:
-            texts = [_with_paperless_metadata_text(c.content, extra_meta) for c in chunks]
-        else:
-            texts = [c.content for c in chunks]
+        texts = [c.content for c in chunks]
         embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH):
             embeddings.extend(embed_documents(texts[i : i + _EMBED_BATCH]))
@@ -141,7 +137,6 @@ class Indexer:
                 "file_hash": file_hash,
                 "chunk_index": i,
                 "source": source,
-                **extra_meta,
             }
             for i, c in enumerate(chunks)
         ]
@@ -307,7 +302,7 @@ class Indexer:
         if source == "obsidian":
             self.link_graph.remove(file_path)
 
-    def full_reindex(self, base_path: str | None = None, source: str = "obsidian", on_progress=None) -> int:
+    def full_reindex(self, base_path: Optional[str] = None, source: str = "obsidian", on_progress=None) -> int:
         """Walk *base_path* (default: VAULT_PATH) and index every ``.md`` and ``.pdf`` file.
 
         For ``source="paperless"`` with ``PAPERLESS_URL`` configured, fetches
@@ -544,7 +539,7 @@ class Indexer:
         except Exception:
             pass
 
-    def _cleanup_deleted(self, source: str = "obsidian", base_path: str | None = None):
+    def _cleanup_deleted(self, source: str = "obsidian", base_path: Optional[str] = None):
         """Remove index entries whose source file no longer exists."""
         root = Path(base_path or self._base_path_for_source(source))
         for doc_key in list(self._file_hashes):
@@ -606,11 +601,14 @@ def _paperless_tag_names(
     """
     import requests
 
+    now = time.monotonic()
+
     # Split into cached hits and IDs that still need resolving
     uncached_ids: list[str] = []
     for raw_tag_id in tag_ids:
         tag_id = str(raw_tag_id)
-        if tag_id not in _PAPERLESS_TAG_NAME_CACHE:
+        cached = _PAPERLESS_TAG_NAME_CACHE.get(tag_id)
+        if not cached or now - cached[1] >= _PAPERLESS_CACHE_TTL_SECONDS:
             uncached_ids.append(tag_id)
 
     # Batch-fetch uncached tags in one request
@@ -627,13 +625,13 @@ def _paperless_tag_names(
                     tid = str(tag.get("id", ""))
                     name = str(tag.get("name", "")).strip()
                     if tid and name:
-                        _PAPERLESS_TAG_NAME_CACHE[tid] = name
+                        _PAPERLESS_TAG_NAME_CACHE[tid] = (name, now)
         except Exception:
             pass  # fall through to per-ID lookups below
 
         # Individual fallback for any IDs still missing after batch
         for tag_id in uncached_ids:
-            if tag_id in _PAPERLESS_TAG_NAME_CACHE:
+            if tag_id in _PAPERLESS_TAG_NAME_CACHE and now - _PAPERLESS_TAG_NAME_CACHE[tag_id][1] < _PAPERLESS_CACHE_TTL_SECONDS:
                 continue
             try:
                 resp = requests.get(
@@ -645,7 +643,7 @@ def _paperless_tag_names(
                     continue
                 name = str(resp.json().get("name", "")).strip()
                 if name:
-                    _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
+                    _PAPERLESS_TAG_NAME_CACHE[tag_id] = (name, now)
             except Exception:
                 continue
 
@@ -654,7 +652,7 @@ def _paperless_tag_names(
     for raw_tag_id in tag_ids:
         cached = _PAPERLESS_TAG_NAME_CACHE.get(str(raw_tag_id))
         if cached:
-            names.append(cached)
+            names.append(cached[0])
     return names
 
 
@@ -667,7 +665,7 @@ def _paperless_correspondent_name(
     cid = str(corr_id)
     now = time.monotonic()
     cached = _PAPERLESS_CORRESPONDENT_CACHE.get(cid)
-    if cached and now - cached[1] < _PAPERLESS_CORRESPONDENT_CACHE_TTL_SECONDS:
+    if cached and now - cached[1] < _PAPERLESS_CACHE_TTL_SECONDS:
         return cached[0]
 
     try:
