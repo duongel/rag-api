@@ -1,6 +1,7 @@
 """Indexer: manages the ChromaDB collection and incremental updates."""
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import List, Sequence, Union
@@ -29,7 +30,7 @@ class Indexer:
         self._file_hashes: dict[str, str] = {}
         # Maps file_path key → source ("obsidian" | "paperless")
         self._file_sources: dict[str, str] = {}
-        # Tracks API content hashes separately for Paperless documents
+                # Tracks API document signatures (content + indexed metadata) for Paperless docs
         self._api_content_hashes: dict[str, str] = {}
         # Maps paperless doc_id (str) → currently indexed file_path for O(1) rename detection
         self._paperless_doc_paths: dict[str, str] = {}
@@ -176,19 +177,6 @@ class Indexer:
         file_path = doc.get("archive_filename") or f"paperless/{doc_id}.pdf"
         doc_key = self._doc_key("paperless", file_path)
 
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-
-        # O(1) rename detection: check if this doc_id was previously indexed under a different path
-        prev_path = self._paperless_doc_paths.get(str(doc_id))
-        path_changed = prev_path is not None and prev_path != file_path
-
-        if not path_changed and self._api_content_hashes.get(doc_key) == content_hash:
-            return False  # unchanged
-
-        # Remove all existing entries for this doc ID (handles renamed archive files)
-        self._remove_all_paths_for_paperless_doc(doc_id)
-        self.remove_file(file_path, source="paperless")
-
         meta: dict = {"paperless_doc_id": str(doc_id)}
         if doc.get("title"):
             meta["title"] = doc["title"]
@@ -199,6 +187,32 @@ class Indexer:
             meta["tags"] = ",".join(str(t) for t in tags)
         if doc.get("created"):
             meta["created"] = doc["created"]
+
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        api_doc_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "content": content,
+                    "title": meta.get("title"),
+                    "correspondent": meta.get("correspondent"),
+                    "tags": meta.get("tags"),
+                    "created": meta.get("created"),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
+        # O(1) rename detection: check if this doc_id was previously indexed under a different path
+        prev_path = self._paperless_doc_paths.get(str(doc_id))
+        path_changed = prev_path is not None and prev_path != file_path
+
+        if not path_changed and self._api_content_hashes.get(doc_key) == api_doc_hash:
+            return False  # unchanged
+
+        # Remove all existing entries for this doc ID (handles renamed archive files)
+        self._remove_all_paths_for_paperless_doc(doc_id)
+        self.remove_file(file_path, source="paperless")
 
         chunks = parse_plaintext(file_path, content)
         if not chunks:
@@ -217,7 +231,7 @@ class Indexer:
                 "file_hash": content_hash,
                 "chunk_index": i,
                 "source": "paperless",
-                "api_content_hash": content_hash,
+                "api_content_hash": api_doc_hash,
                 **meta,
             }
             for i, c in enumerate(chunks)
@@ -232,7 +246,7 @@ class Indexer:
 
         self._file_hashes[doc_key] = content_hash
         self._file_sources[doc_key] = "paperless"
-        self._api_content_hashes[doc_key] = content_hash
+        self._api_content_hashes[doc_key] = api_doc_hash
         self._paperless_doc_paths[str(doc_id)] = file_path
         logger.info("Indexed paperless doc %s [%s] (%d chunks)", doc_id, file_path, len(chunks))
         return True
