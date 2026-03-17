@@ -1,3 +1,35 @@
+# [1.8.0](https://github.com/duongel/rag-api/compare/v1.7.2...v1.8.0) (2026-03-17)
+
+
+### Bug Fixes
+
+* address PR review comments - dead code, type hints, tag cache TTL ([33e04b7](https://github.com/duongel/rag-api/commit/33e04b7cfc29a7b01c2f8c2f9b2dc8efeb1924cf))
+* address PR review comments (fail-closed, pagination, filter enforcement, cache refresh) ([8b1eaf6](https://github.com/duongel/rag-api/commit/8b1eaf6badd0dc7ab4039e39e5d8a6676b7bfe6f))
+* include tag_names in Paperless change detection hash ([ffe0c47](https://github.com/duongel/rag-api/commit/ffe0c474104154ecef8e821ae01c6c0b722aa158))
+* **indexing:** avoid permanent cache on failed tag lookups ([67c9def](https://github.com/duongel/rag-api/commit/67c9defc14703e6618df47872f400393944ebde8))
+* **indexing:** enrich paperless API chunks with metadata text ([86ed214](https://github.com/duongel/rag-api/commit/86ed214c12984f7bcf001c9d2a1606066427a498))
+* **indexing:** reindex paperless docs on metadata-only updates ([fcc07ad](https://github.com/duongel/rag-api/commit/fcc07ad803c2c18429fd02488bef3e7fc4e372cb))
+* keyword_search respects Paperless filter, handle multi-tag intersection ([a3cca3e](https://github.com/duongel/rag-api/commit/a3cca3e884be197dde24a0891dc98fb37864c737))
+* resolve Paperless tag IDs to names in index_paperless_doc ([50c49a1](https://github.com/duongel/rag-api/commit/50c49a159d4fbdb7eb243d40b013796b2cf6940c))
+* resolve test isolation failures (env-var ordering, status name shadowing, sys.modules stubs) ([1bdabf0](https://github.com/duongel/rag-api/commit/1bdabf0993ca2a51e585e2e1f321b64cd822638b))
+* revert config.py PUBLIC_URL default to localhost, handle both in api.py ([681f0a3](https://github.com/duongel/rag-api/commit/681f0a379187c8092a03567d3cfdaff14beb99ef))
+* **search:** preserve filename matches and substring paperless filters ([f20d0a5](https://github.com/duongel/rag-api/commit/f20d0a58f9fd100be6a9ac9552d3a2071f213291))
+* separate correspondent display name from filter field, remove dead code, add filter tests ([a9105c1](https://github.com/duongel/rag-api/commit/a9105c1423ff31c6fa02b0daf7e6074b0c6d2dc9))
+
+
+### Features
+
+* boost tag weight in Paperless chunk embeddings ([8553a1a](https://github.com/duongel/rag-api/commit/8553a1aaf0d74191f62727f3c31bcecd755eb7c4))
+* increase tag repetition to 5x for stronger embedding weight ([1ea99e5](https://github.com/duongel/rag-api/commit/1ea99e55ee4b8a4db28ddd7d96947b1912a8f788))
+* **indexing:** include Paperless tags in indexed document content ([2624c09](https://github.com/duongel/rag-api/commit/2624c097a9d0eef1eb098a9083870ea08674b742))
+* new api to filter, improved search results ([36b091a](https://github.com/duongel/rag-api/commit/36b091a516d30e527de7c20e40790aa769e70ddf))
+* Paperless pre-filter for search (tags, correspondent, year) ([830fa92](https://github.com/duongel/rag-api/commit/830fa92cba312822112158501aa16574f96a0068))
+
+
+### Performance Improvements
+
+* batch-fetch Paperless tag names to avoid N+1 API calls ([61c7e52](https://github.com/duongel/rag-api/commit/61c7e521bb77c121ce133f94f893aa7b97cff497))
+
 ## [1.7.2](https://github.com/duongel/rag-api/compare/v1.7.1...v1.7.2) (2026-03-16)
 
 
