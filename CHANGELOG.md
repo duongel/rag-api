@@ -1,3 +1,11 @@
+## [1.9.1](https://github.com/duongel/rag-api/compare/v1.9.0...v1.9.1) (2026-03-17)
+
+
+### Bug Fixes
+
+* add timeout to GitHub API version fetch ([bd1e9f9](https://github.com/duongel/rag-api/commit/bd1e9f9a7ccd74c2189ca273fba9e6d1aadc0f2a))
+* fetch version from GitHub API when pyproject.toml is absent ([0c2c58e](https://github.com/duongel/rag-api/commit/0c2c58e789c3db1a06847d42887ed1bfe94bb76f))
+
 # [1.9.0](https://github.com/duongel/rag-api/compare/v1.8.2...v1.9.0) (2026-03-17)
 
 
