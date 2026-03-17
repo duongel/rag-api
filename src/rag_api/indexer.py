@@ -436,8 +436,12 @@ class Indexer:
         processed_counter = [0]  # mutable for closure access
         counter_lock = threading.Lock()
 
-        def _index_one(doc: dict) -> bool:
-            """Index a single doc; called from thread pool."""
+        def _index_one(doc: dict) -> Optional[str]:
+            """Index a single doc; called from thread pool.
+
+            Returns the actual file_path used for indexing (after potential
+            detail resolution), or None if the doc was skipped/failed.
+            """
             # List responses may omit content; fetch individual doc details.
             if "content" not in doc and doc.get("id") is not None:
                 try:
@@ -450,25 +454,27 @@ class Indexer:
                         doc = detail.json()
                 except Exception as e:
                     logger.warning("Failed to fetch detail for doc %s: %s", doc["id"], e)
-            return self.index_paperless_doc(doc)
+            fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
+            self.index_paperless_doc(doc)
+            return fp
 
         workers = max(1, PAPERLESS_REINDEX_WORKERS)
         logger.info("Indexing with %d worker(s)", workers)
-
-        # Collect file paths first (cheap, no concurrency needed)
-        for doc in all_docs:
-            fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
-            indexed_file_paths.add(fp)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(_index_one, doc): doc for doc in all_docs}
             for future in as_completed(futures):
                 doc = futures[future]
                 try:
-                    if future.result():
+                    fp = future.result()
+                    if fp:
+                        indexed_file_paths.add(fp)
                         count += 1
                 except Exception as e:
                     logger.error("Error indexing paperless doc %s: %s", doc.get("id"), e)
+                    # Fall back to list-payload path for cleanup safety
+                    fp = doc.get("archive_filename") or f"paperless/{doc.get('id')}.pdf"
+                    indexed_file_paths.add(fp)
                 with counter_lock:
                     processed_counter[0] += 1
                     if on_progress:
