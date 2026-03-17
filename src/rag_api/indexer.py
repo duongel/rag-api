@@ -429,7 +429,7 @@ class Indexer:
         all_docs: list[dict] = list(data.get("results", []))
         total_count = data.get("count", len(all_docs))
         total_pages = max(1, math.ceil(total_count / page_size))
-        fetch_complete = total_pages <= 1
+        fetch_complete = total_pages <= 1 and len(all_docs) >= total_count
 
         # Phase 1b: fetch remaining pages in parallel
         if total_pages > 1:
@@ -461,7 +461,19 @@ class Indexer:
                     else:
                         failed_pages += 1
 
-            fetch_complete = failed_pages == 0
+            if failed_pages > 0:
+                fetch_complete = False
+            elif len(all_docs) < total_count:
+                # Dataset changed during fetch or Paperless returned fewer
+                # results per page than requested — treat as incomplete to
+                # prevent the cleanup phase from deleting still-existing docs.
+                logger.warning(
+                    "Expected %d documents but only received %d — marking fetch as incomplete",
+                    total_count, len(all_docs),
+                )
+                fetch_complete = False
+            else:
+                fetch_complete = True
 
         if not all_docs and not fetch_complete:
             logger.warning("No documents returned from Paperless API (fetch incomplete)")
