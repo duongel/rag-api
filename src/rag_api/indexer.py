@@ -614,31 +614,61 @@ def _paperless_api_meta(file_path: str) -> dict:
 def _paperless_tag_names(
     tag_ids: Sequence[Union[int, str]], paperless_url: str, token: str
 ) -> List[str]:
-    """Resolve Paperless tag IDs to names with an in-memory cache."""
+    """Resolve Paperless tag IDs to names with an in-memory cache.
+
+    Uncached IDs are fetched in a single batch request via
+    ``GET /api/tags/?id__in=…`` to avoid N+1 round-trips during initial
+    indexing.  Falls back to individual lookups on failure.
+    """
     import requests
 
-    names: list[str] = []
+    # Split into cached hits and IDs that still need resolving
+    uncached_ids: list[str] = []
     for raw_tag_id in tag_ids:
         tag_id = str(raw_tag_id)
-        if tag_id in _PAPERLESS_TAG_NAME_CACHE:
-            cached = _PAPERLESS_TAG_NAME_CACHE[tag_id]
-            if cached:
-                names.append(cached)
-            continue
+        if tag_id not in _PAPERLESS_TAG_NAME_CACHE:
+            uncached_ids.append(tag_id)
 
+    # Batch-fetch uncached tags in one request
+    if uncached_ids:
         try:
             resp = requests.get(
-                f"{paperless_url}/api/tags/{tag_id}/",
+                f"{paperless_url}/api/tags/",
+                params={"id__in": ",".join(uncached_ids), "page_size": len(uncached_ids)},
                 headers={"Authorization": f"Token {token}"},
-                timeout=5,
+                timeout=10,
             )
-            if not resp.ok:
-                continue
-            name = str(resp.json().get("name", "")).strip()
-            if name:
-                _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
-                names.append(name)
+            if resp.ok:
+                for tag in resp.json().get("results", []):
+                    tid = str(tag.get("id", ""))
+                    name = str(tag.get("name", "")).strip()
+                    if tid and name:
+                        _PAPERLESS_TAG_NAME_CACHE[tid] = name
         except Exception:
-            continue
+            pass  # fall through to per-ID lookups below
 
+        # Individual fallback for any IDs still missing after batch
+        for tag_id in uncached_ids:
+            if tag_id in _PAPERLESS_TAG_NAME_CACHE:
+                continue
+            try:
+                resp = requests.get(
+                    f"{paperless_url}/api/tags/{tag_id}/",
+                    headers={"Authorization": f"Token {token}"},
+                    timeout=5,
+                )
+                if not resp.ok:
+                    continue
+                name = str(resp.json().get("name", "")).strip()
+                if name:
+                    _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
+            except Exception:
+                continue
+
+    # Build result list preserving input order
+    names: list[str] = []
+    for raw_tag_id in tag_ids:
+        cached = _PAPERLESS_TAG_NAME_CACHE.get(str(raw_tag_id))
+        if cached:
+            names.append(cached)
     return names
