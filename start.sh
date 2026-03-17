@@ -15,7 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ── Version (read from pyproject.toml) ────────────────────────────────────
-_VERSION=$(grep -m1 '^version' pyproject.toml 2>/dev/null | sed 's/.*"\(.*\)"/\1/' || echo "unknown")
+_VERSION=$(grep -m1 '^version' pyproject.toml 2>/dev/null | sed -n 's/.*"\(.*\)"/\1/p')
+_VERSION="${_VERSION:-unknown}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 # die() must be defined before argument parsing so unknown flags print a proper error.
