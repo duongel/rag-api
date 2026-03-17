@@ -9,12 +9,6 @@ import os
 
 import pytest
 
-# Ensure config defaults are safe for testing (no external services)
-os.environ.setdefault("CHROMA_PATH", "/tmp/test_chroma")
-os.environ.setdefault("AUTH_REQUIRED", "false")
-os.environ.setdefault("PAPERLESS_URL", "http://paperless:8000")
-os.environ.setdefault("PAPERLESS_TOKEN", "test-token")
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,6 +72,19 @@ class TestIndexPaperlessDoc:
 
         doc["content"] = "Version 2 with different text"
         assert indexer.index_paperless_doc(doc) is True
+
+    def test_metadata_only_change_reindexes(self, indexer):
+        doc = _make_doc(13, content="Stable OCR", title="Invoice", tags=[1])
+        assert indexer.index_paperless_doc(doc) is True
+
+        # OCR text unchanged, only metadata changed
+        doc["tags"] = [1, 2]
+        assert indexer.index_paperless_doc(doc) is True
+
+        results = indexer.collection.get(where={"paperless_doc_id": "13"}, include=["documents", "metadatas"])
+        assert results["documents"]
+        assert "Tags: 1,2" in results["documents"][0]
+        assert results["metadatas"][0]["tags"] == "1,2"
 
     def test_no_id_returns_false(self, indexer):
         assert indexer.index_paperless_doc({}) is False
@@ -156,6 +163,28 @@ class TestIndexPaperlessDoc:
         assert meta["correspondent"] == "42"
         assert meta["tags"] == "1,2,3"
         assert meta["created"] == "2024-01-15"
+
+    def test_metadata_is_embedded_into_indexed_chunk_text(self, indexer):
+        doc = _make_doc(
+            12,
+            content="OCR body text",
+            title="Gas Invoice",
+            correspondent=7,
+            tags=[10, 11],
+        )
+
+        assert indexer.index_paperless_doc(doc) is True
+
+        results = indexer.collection.get(
+            where={"paperless_doc_id": "12"}, include=["documents", "metadatas"]
+        )
+        assert results["documents"]
+        chunk_text = results["documents"][0]
+        assert "Paperless Metadata" in chunk_text
+        assert "Title: Gas Invoice" in chunk_text
+        assert "Correspondent: 7" in chunk_text
+        assert "Tags: 10,11" in chunk_text
+        assert chunk_text.endswith("OCR body text")
 
 
 # ===========================================================================

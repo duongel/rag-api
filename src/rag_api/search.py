@@ -1,11 +1,15 @@
 """Semantic and keyword search across the indexed Obsidian vault."""
 
+import logging
 import re
 from pathlib import Path
+from typing import Optional
 
 from .config import VAULT_PATH, DATA_SOURCES
 from .embeddings import embed_query
 from .indexer import Indexer
+
+logger = logging.getLogger(__name__)
 
 # Maximum number of link-expanded notes appended to a result set
 _MAX_LINK_EXPANSIONS = 10
@@ -35,17 +39,32 @@ class Searcher:
     # ------------------------------------------------------------------
 
     def semantic_search(
-        self, query: str, top_k: int = 5, expand_links: bool = True
+        self, query: str, top_k: int = 5, expand_links: bool = True,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
-        append linked notes up to 2 degrees of separation."""
+        append linked notes up to 2 degrees of separation.
+
+        Paperless filter parameters build a ChromaDB ``where`` clause so
+        only matching documents are considered.
+        """
         query_embedding = embed_query(query)
 
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, self.collection.count() or 1),
-            include=["documents", "metadatas", "distances"],
+        where = _build_chromadb_filters(
+            paperless_tags, paperless_correspondent, paperless_created_year,
         )
+
+        query_kwargs: dict = {
+            "query_embeddings": [query_embedding],
+            "n_results": min(top_k, self.collection.count() or 1),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            query_kwargs["where"] = where
+
+        results = self.collection.query(**query_kwargs)
 
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
@@ -62,7 +81,7 @@ class Searcher:
                 entry["paperless_doc_id"] = meta["paperless_doc_id"]
             output.append(entry)
 
-        if expand_links:
+        if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
 
         return output[:top_k]
@@ -174,7 +193,7 @@ class Searcher:
 
     def _best_chunk_for_file(
         self, file_path: str, query_embedding: list[float]
-    ) -> dict | None:
+    ) -> Optional[dict]:
         """Return the semantically closest chunk for a specific file."""
         try:
             res = self.collection.query(
@@ -203,23 +222,55 @@ class Searcher:
     # Keyword / exact-match search
     # ------------------------------------------------------------------
 
-    def keyword_search(self, query: str, top_k: int = 10) -> list[dict]:
+    def keyword_search(
+        self, query: str, top_k: int = 10,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
+    ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
 
         Scoring is based on match location, word-boundary matches, and
         frequency so that results containing the query more often or as a
         whole word rank higher.
+
+        Paperless filter parameters are mapped to ChromaDB ``where``
+        conditions so only matching chunks participate.
         """
+        where = _build_chromadb_filters(
+            paperless_tags, paperless_correspondent, paperless_created_year,
+        )
+        has_filter = where is not None
+
+        allowed_file_paths: Optional[set[str]] = None
+        if has_filter:
+            try:
+                filter_docs = self.collection.get(where=where, include=["metadatas"])
+                allowed_file_paths = {
+                    m.get("file_path", "")
+                    for m in (filter_docs.get("metadatas") or [])
+                    if m.get("file_path")
+                }
+            except Exception:
+                allowed_file_paths = set()
+            if not allowed_file_paths:
+                return []
+
         query_lower = query.lower()
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
         results: list[dict] = []
         seen: set[str] = set()
 
-        # 1) Filename matches — only for text-readable (Markdown) obsidian files
+        # 1) Filename matches
         for doc_key, source in self.indexer._file_sources.items():
             fp = self.indexer._file_path_from_key(doc_key)
             if query_lower not in fp.lower():
                 continue
+            if has_filter:
+                if source != "paperless":
+                    continue
+                if allowed_file_paths is not None and fp not in allowed_file_paths:
+                    continue
             if source == "paperless" or not fp.endswith(".md"):
                 # PDFs are binary; content is already in ChromaDB (step 2)
                 results.append(
@@ -252,7 +303,10 @@ class Searcher:
 
         # 2) Content matches — always case-insensitive via full scan
         try:
-            all_docs = self.collection.get(include=["documents", "metadatas"])
+            get_kwargs: dict = {"include": ["documents", "metadatas"]}
+            if where is not None:
+                get_kwargs["where"] = where
+            all_docs = self.collection.get(**get_kwargs)
             for i, doc in enumerate(all_docs["documents"] or []):
                 if query_lower not in doc.lower():
                     continue
@@ -303,7 +357,7 @@ class Searcher:
     # Single note retrieval
     # ------------------------------------------------------------------
 
-    def get_note(self, path: str) -> dict | None:
+    def get_note(self, path: str) -> Optional[dict]:
         """Return full content of a note by relative path.
 
         For Obsidian notes the file is read from disk.  For Paperless
@@ -322,7 +376,7 @@ class Searcher:
         # Fall back to ChromaDB (covers Paperless and any indexed-only docs)
         return self._get_note_from_index(path)
 
-    def _get_note_from_index(self, path: str) -> dict | None:
+    def _get_note_from_index(self, path: str) -> Optional[dict]:
         """Reassemble a document's content from its indexed chunks."""
         try:
             results = self.collection.get(
@@ -348,3 +402,30 @@ class Searcher:
         if meta.get("paperless_doc_id"):
             note["paperless_doc_id"] = meta["paperless_doc_id"]
         return note
+
+
+def _build_chromadb_filters(
+    tags: Optional[list[str]] = None,
+    correspondent: Optional[str] = None,
+    created_year: Optional[int] = None,
+) -> Optional[dict]:
+    """Build a coarse ChromaDB ``where`` filter from Paperless parameters.
+
+    Tags are matched via ``ptag_<name>`` metadata keys (exact, case-insensitive).
+    Correspondent is matched via ``correspondent_name_lc`` (exact, case-insensitive).
+    Year is matched via ``created_year`` (exact integer equality).
+    """
+    if not any([tags, correspondent, created_year]):
+        return None
+
+    conditions: list[dict] = [{"source": "paperless"}]
+
+    if created_year is not None:
+        conditions.append({"created_year": created_year})
+    if correspondent:
+        conditions.append({"correspondent_name_lc": correspondent.lower()})
+    if tags:
+        for tag in tags:
+            conditions.append({f"ptag_{tag.lower()}": 1})
+
+    return {"$and": conditions} if len(conditions) > 1 else conditions[0]
