@@ -8,7 +8,7 @@ It is intended for trusted clients that authenticate with a bearer token.
 ## Base URL
 
 ```
-http://localhost:8484
+http://127.0.0.1:8484
 ```
 
 Internal-only Docker deployments can use:
@@ -20,9 +20,9 @@ http://rag-api:8080
 **Agent integration:**
 | Format | URL |
 |---|---|
-| This document (Markdown) | `http://localhost:8484/skill` |
-| OpenAPI 3.x spec (GPT Actions, LangChain, …) | `http://localhost:8484/openapi.json` |
-| Swagger UI | `http://localhost:8484/docs` |
+| This document (Markdown) | `http://127.0.0.1:8484/skill` |
+| OpenAPI 3.x spec (GPT Actions, LangChain, …) | `http://127.0.0.1:8484/openapi.json` |
+| Swagger UI | `http://127.0.0.1:8484/docs` |
 
 ## Authentication
 
@@ -312,7 +312,7 @@ This matrix evaluates what works with minimal setup.
 - `SKILL.md` is sufficient if the agent can make local HTTP requests or map them through built-in tools.
 - `OpenAPI` is the simplest integration path without MCP, if the agent can import external APIs.
 - `localhost` is only directly usable if the agent runs on your machine or in the same local runtime.
-- For cloud agents, replace `http://localhost:8484` with a reachable `https` URL.
+- For cloud agents, replace `http://127.0.0.1:8484` with a reachable `https` URL.
 - Without HTTP/tool access, `SKILL.md` is only a behavioral guide, not a real connection to the API.
 
 ## Available Endpoints
@@ -324,7 +324,7 @@ Searches for semantically similar note sections. Also returns linked and tag-con
 Use `min_score` to filter out irrelevant results (recommended: `0.72` for precise questions, `0.65` for broad topics).
 
 ```bash
-curl -s http://localhost:8484/search \
+curl -s http://127.0.0.1:8484/search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "How does the heat pump work?", "top_k": 5, "min_score": 0.70}'
@@ -332,7 +332,7 @@ curl -s http://localhost:8484/search \
 
 **With Paperless filters** (pre-filter by tag and year, then rank semantically):
 ```bash
-curl -s http://localhost:8484/search \
+curl -s http://127.0.0.1:8484/search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "alle Kosten", "top_k": 10, "paperless_tags": ["etron"], "paperless_created_year": 2025}'
@@ -377,7 +377,7 @@ curl -s http://localhost:8484/search \
 Case-insensitive full-text search in filenames **and** note content. **Required for:** abbreviations, IDs, version numbers, hostnames, model names, configuration keys – anything that semantic search cannot find by exact spelling.
 
 ```bash
-curl -s http://localhost:8484/keyword-search \
+curl -s http://127.0.0.1:8484/keyword-search \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "NanoHD", "top_k": 5}'
@@ -418,14 +418,14 @@ curl -s http://localhost:8484/keyword-search \
 Returns the full Markdown content of a single note.
 
 ```bash
-curl -s "http://localhost:8484/note?path=Home/Heating/Heatpump.md" \
+curl -s "http://127.0.0.1:8484/note?path=Home/Heating/Heatpump.md" \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 ```
 
 **POST variant** (for agents that use POST for all endpoints, e.g. n8n HTTP Request Tool):
 
 ```bash
-curl -s http://localhost:8484/note \
+curl -s http://127.0.0.1:8484/note \
   -H "Authorization: Bearer $API_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"path": "Home/Heating/Heatpump.md"}'
@@ -434,14 +434,14 @@ curl -s http://localhost:8484/note \
 ### 4. Trigger Reindex
 
 ```bash
-curl -s -X POST http://localhost:8484/reindex \
+curl -s -X POST http://127.0.0.1:8484/reindex \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 ```
 
 ### 5. Indexing Status
 
 ```bash
-curl -s http://localhost:8484/status \
+curl -s http://127.0.0.1:8484/status \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 # → {"indexing": false, "indexed_files": 95}
 ```
@@ -449,7 +449,7 @@ curl -s http://localhost:8484/status \
 ### 6. Statistics
 
 ```bash
-curl -s http://localhost:8484/stats \
+curl -s http://127.0.0.1:8484/stats \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 # → {"total_chunks": 187, "total_files": 95, "link_graph_edges": 42}
 ```
@@ -457,7 +457,7 @@ curl -s http://localhost:8484/stats \
 ### 7. Health Check
 
 ```bash
-curl -s http://localhost:8484/health
+curl -s http://127.0.0.1:8484/health
 ```
 
 ## Search Strategy for Agents
