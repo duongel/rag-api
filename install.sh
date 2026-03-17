@@ -4,7 +4,7 @@
 set -euo pipefail
 
 BASE="https://raw.githubusercontent.com/duongel/rag-api/master"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/rag-api}"
+INSTALL_DIR="${INSTALL_DIR:-$PWD}"
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
