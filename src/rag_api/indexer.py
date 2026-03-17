@@ -381,6 +381,10 @@ class Indexer:
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
 
+        # Pre-warm caches: batch-fetch all tags and correspondents in 1-2 requests
+        _prefetch_all_tags(PAPERLESS_URL, PAPERLESS_TOKEN)
+        _prefetch_all_correspondents(PAPERLESS_URL, PAPERLESS_TOKEN)
+
         # Phase 1: collect all documents from the API
         all_docs: list[dict] = []
         page = 1
@@ -588,6 +592,62 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
+
+
+def _prefetch_all_tags(paperless_url: str, token: str) -> None:
+    """Fetch all tags in one paginated sweep and warm the cache."""
+    import requests
+    now = time.monotonic()
+    url: Optional[str] = f"{paperless_url}/api/tags/"
+    params: Optional[dict] = {"page_size": 500}
+    while url:
+        try:
+            resp = requests.get(
+                url, params=params,
+                headers={"Authorization": f"Token {token}"},
+                timeout=10,
+            )
+            if not resp.ok:
+                break
+            data = resp.json()
+            for tag in data.get("results", []):
+                tid = str(tag.get("id", ""))
+                name = str(tag.get("name", "")).strip()
+                if tid and name:
+                    _PAPERLESS_TAG_NAME_CACHE[tid] = (name, now)
+            url = data.get("next")
+            params = None  # next URL already contains query params
+        except Exception:
+            break
+    logger.info("Pre-fetched %d tag names", len(_PAPERLESS_TAG_NAME_CACHE))
+
+
+def _prefetch_all_correspondents(paperless_url: str, token: str) -> None:
+    """Fetch all correspondents in one paginated sweep and warm the cache."""
+    import requests
+    now = time.monotonic()
+    url: Optional[str] = f"{paperless_url}/api/correspondents/"
+    params: Optional[dict] = {"page_size": 500}
+    while url:
+        try:
+            resp = requests.get(
+                url, params=params,
+                headers={"Authorization": f"Token {token}"},
+                timeout=10,
+            )
+            if not resp.ok:
+                break
+            data = resp.json()
+            for corr in data.get("results", []):
+                cid = str(corr.get("id", ""))
+                name = str(corr.get("name", "")).strip()
+                if cid and name:
+                    _PAPERLESS_CORRESPONDENT_CACHE[cid] = (name, now)
+            url = data.get("next")
+            params = None
+        except Exception:
+            break
+    logger.info("Pre-fetched %d correspondent names", len(_PAPERLESS_CORRESPONDENT_CACHE))
 
 
 def _paperless_tag_names(
