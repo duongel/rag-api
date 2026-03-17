@@ -1,3 +1,23 @@
+# [1.9.0](https://github.com/duongel/rag-api/compare/v1.8.2...v1.9.0) (2026-03-17)
+
+
+### Bug Fixes
+
+* correct version to match latest release v1.8.2 ([7757a16](https://github.com/duongel/rag-api/commit/7757a16b65e25da6c603505c1a5ff2f5c41981f8))
+* record cleanup paths after document detail resolution ([de8d9f8](https://github.com/duongel/rag-api/commit/de8d9f82cb5dc941fe8658898b4aaa95f0f5d3fc))
+* thread-safety bugs in concurrent Paperless indexing ([4b70723](https://github.com/duongel/rag-api/commit/4b707231ba01d8262a51bfae73bb6688a1dacc43))
+* version fallback in start.sh when pyproject.toml is missing ([0aff0b3](https://github.com/duongel/rag-api/commit/0aff0b36810c7129ff20b1e46ed586a5bc8b7ae5))
+
+
+### Features
+
+* display current version in start.sh banner ([dc5e6f5](https://github.com/duongel/rag-api/commit/dc5e6f550cd70c3f28731305ce478481837c3e62))
+
+
+### Performance Improvements
+
+* concurrent Paperless indexing with ThreadPoolExecutor ([1018958](https://github.com/duongel/rag-api/commit/10189582dcb31a852cc3f51d01849938e0e3c1e4))
+
 ## [1.8.2](https://github.com/duongel/rag-api/compare/v1.8.1...v1.8.2) (2026-03-17)
 
 
