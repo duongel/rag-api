@@ -201,6 +201,7 @@ class Indexer:
                     "title": meta.get("title"),
                     "correspondent": meta.get("correspondent"),
                     "tags": meta.get("tags"),
+                    "tag_names": meta.get("tag_names"),
                     "created": meta.get("created"),
                 },
                 sort_keys=True,
