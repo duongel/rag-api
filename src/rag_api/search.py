@@ -249,14 +249,25 @@ class Searcher:
         results: list[dict] = []
         seen: set[str] = set()
 
+        # Build reverse lookup so we can map file_path → doc_id for paperless files
+        paperless_path_to_id: dict[str, str] = {}
+        if allowed_doc_ids is not None:
+            paperless_path_to_id = {
+                fp: did for did, fp in self.indexer._paperless_doc_paths.items()
+            }
+
         # 1) Filename matches — only for text-readable (Markdown) obsidian files
         for doc_key, source in self.indexer._file_sources.items():
             fp = self.indexer._file_path_from_key(doc_key)
             if query_lower not in fp.lower():
                 continue
             # When Paperless filters are active, skip non-matching files
-            if allowed_doc_ids is not None and source != "paperless":
-                continue
+            if allowed_doc_ids is not None:
+                if source != "paperless":
+                    continue
+                pdid = paperless_path_to_id.get(fp)
+                if pdid is None or pdid not in allowed_doc_ids:
+                    continue
             if source == "paperless" or not fp.endswith(".md"):
                 # PDFs are binary; content is already in ChromaDB (step 2)
                 results.append(
@@ -414,6 +425,28 @@ def query_paperless_doc_ids(
 
     import requests
 
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+    def _fetch_all_ids(req_params: dict) -> Optional[set[str]]:
+        """Fetch all pages for a filter query, returning doc IDs or None on error."""
+        doc_ids: set[str] = set()
+        url: Optional[str] = f"{PAPERLESS_URL}/api/documents/"
+        params: Optional[dict] = req_params
+        while url:
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    logger.warning("Paperless filter query failed: %s", resp.status_code)
+                    return None
+                data = resp.json()
+                doc_ids.update(str(doc["id"]) for doc in data.get("results", []))
+                url = data.get("next")
+                params = None  # next URL already contains query params
+            except Exception:
+                logger.exception("Paperless filter query error")
+                return None
+        return doc_ids
+
     params: dict = {"fields": "id", "page_size": 500}
     if tags:
         # tags__name__icontains accepts a single string; for multiple tags
@@ -430,21 +463,10 @@ def query_paperless_doc_ids(
                     tag_params["correspondent__name__icontains"] = correspondent
                 if created_year:
                     tag_params["created__year"] = created_year
-                try:
-                    resp = requests.get(
-                        f"{PAPERLESS_URL}/api/documents/",
-                        params=tag_params,
-                        headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
-                        timeout=10,
-                    )
-                    if not resp.ok:
-                        logger.warning("Paperless filter query failed: %s", resp.status_code)
-                        return None
-                    data = resp.json()
-                    id_sets.append({str(doc["id"]) for doc in data.get("results", [])})
-                except Exception:
-                    logger.exception("Paperless filter query error")
-                    return None
+                ids = _fetch_all_ids(tag_params)
+                if ids is None:
+                    return []
+                id_sets.append(ids)
             result_ids = id_sets[0]
             for s in id_sets[1:]:
                 result_ids &= s
@@ -454,19 +476,7 @@ def query_paperless_doc_ids(
     if created_year:
         params["created__year"] = created_year
 
-    try:
-        resp = requests.get(
-            f"{PAPERLESS_URL}/api/documents/",
-            params=params,
-            headers={"Authorization": f"Token {PAPERLESS_TOKEN}"},
-            timeout=10,
-        )
-        if not resp.ok:
-            logger.warning("Paperless filter query failed: %s", resp.status_code)
-            return None
-        data = resp.json()
-        doc_ids = [str(doc["id"]) for doc in data.get("results", [])]
-        return doc_ids
-    except Exception:
-        logger.exception("Paperless filter query error")
-        return None
+    ids = _fetch_all_ids(params)
+    if ids is None:
+        return []
+    return sorted(ids)

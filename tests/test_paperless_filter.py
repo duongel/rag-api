@@ -51,7 +51,7 @@ class TestQueryPaperlessDocIds:
 
         assert result == []
 
-    def test_returns_none_on_api_failure(self):
+    def test_returns_empty_on_api_failure(self):
         from rag_api.search import query_paperless_doc_ids
 
         mock_resp = MagicMock()
@@ -61,7 +61,7 @@ class TestQueryPaperlessDocIds:
         with patch("requests.get", return_value=mock_resp):
             result = query_paperless_doc_ids(tags=["etron"])
 
-        assert result is None
+        assert result == []
 
     def test_passes_year_and_correspondent(self):
         from rag_api.search import query_paperless_doc_ids
