@@ -609,13 +609,12 @@ def _paperless_tag_names(tag_ids: list[int] | list[str], paperless_url: str, tok
                 timeout=5,
             )
             if not resp.ok:
-                _PAPERLESS_TAG_NAME_CACHE[tag_id] = ""
                 continue
             name = str(resp.json().get("name", "")).strip()
-            _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
             if name:
+                _PAPERLESS_TAG_NAME_CACHE[tag_id] = name
                 names.append(name)
         except Exception:
-            _PAPERLESS_TAG_NAME_CACHE[tag_id] = ""
+            continue
 
     return names
