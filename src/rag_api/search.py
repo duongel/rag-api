@@ -69,18 +69,65 @@ class Searcher:
         # multiple chunks from the same document/section) doesn't
         # under-fill the result set.  For date-sorting we need an even
         # wider pool to capture truly newest documents.
-        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
+        #
+        # In the default (non-date) path we adaptively widen the fetch
+        # until either top_k unique results are collected or the corpus
+        # is exhausted, because a single long document can dominate the
+        # top-ranked chunks and collapse to one entry after dedup.
+        corpus_size = self.collection.count() or 1
 
-        query_kwargs: dict = {
-            "query_embeddings": [query_embedding],
-            "n_results": min(fetch_k, self.collection.count() or 1),
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if where:
-            query_kwargs["where"] = where
+        if sort_by_date:
+            fetch_k = max(top_k * 20, 200)
+            fetch_k = min(fetch_k, corpus_size)
 
-        results = self.collection.query(**query_kwargs)
+            query_kwargs: dict = {
+                "query_embeddings": [query_embedding],
+                "n_results": fetch_k,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where:
+                query_kwargs["where"] = where
 
+            results = self.collection.query(**query_kwargs)
+            output = self._parse_query_results(results)
+            output = self._dedup_results(output)
+        else:
+            fetch_k = top_k * 3
+            output: list[dict] = []
+            while True:
+                actual_k = min(fetch_k, corpus_size)
+                query_kwargs = {
+                    "query_embeddings": [query_embedding],
+                    "n_results": actual_k,
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if where:
+                    query_kwargs["where"] = where
+
+                results = self.collection.query(**query_kwargs)
+                output = self._dedup_results(self._parse_query_results(results))
+
+                if len(output) >= top_k or actual_k >= corpus_size:
+                    break
+                # Double the window for the next attempt
+                fetch_k = min(fetch_k * 2, corpus_size)
+
+        if expand_links and not where:
+            output = self._expand_with_links(output, query_embedding, top_k)
+
+        if sort_by_date:
+            if min_score > 0:
+                output = [r for r in output if r["score"] >= min_score]
+            output.sort(
+                key=lambda r: r.get("created", ""),
+                reverse=True,
+            )
+
+        return output[:top_k]
+
+    @staticmethod
+    def _parse_query_results(results: dict) -> list[dict]:
+        """Convert raw ChromaDB query output into a flat result list."""
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
             meta = results["metadatas"][0][i]
@@ -97,21 +144,7 @@ class Searcher:
             if meta.get("created"):
                 entry["created"] = meta["created"]
             output.append(entry)
-
-        output = self._dedup_results(output)
-
-        if expand_links and not where:
-            output = self._expand_with_links(output, query_embedding, top_k)
-
-        if sort_by_date:
-            if min_score > 0:
-                output = [r for r in output if r["score"] >= min_score]
-            output.sort(
-                key=lambda r: r.get("created", ""),
-                reverse=True,
-            )
-
-        return output[:top_k]
+        return output
 
     @staticmethod
     def _dedup_results(results: list[dict]) -> list[dict]:
@@ -760,9 +793,22 @@ def _build_chromadb_filters(
             if not doc_ids:
                 # Paperless returned 0 matches → short-circuit
                 return {"paperless_doc_id": "__NO_MATCH__"}
-            if len(doc_ids) == 1:
+            # Cap the number of IDs materialised into a single $or
+            # clause.  Very broad filters (e.g. a whole year) can
+            # match thousands of documents; a huge $or degrades
+            # ChromaDB query latency.  Fall back to legacy metadata
+            # filters if the set is too large.
+            _MAX_OR_IDS = 200
+            if len(doc_ids) > _MAX_OR_IDS:
+                logger.info(
+                    "Paperless pre-filter matched %d docs (> %d); "
+                    "falling back to metadata filters",
+                    len(doc_ids), _MAX_OR_IDS,
+                )
+            elif len(doc_ids) == 1:
                 return {"paperless_doc_id": doc_ids[0]}
-            return {"$or": [{"paperless_doc_id": did} for did in doc_ids]}
+            else:
+                return {"$or": [{"paperless_doc_id": did} for did in doc_ids]}
 
     # Fallback: basic ChromaDB metadata filter (legacy)
     conditions: list[dict] = [{"source": "paperless"}]
