@@ -43,12 +43,18 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        sort_by_date: bool = False,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
         append linked notes up to 2 degrees of separation.
 
         Paperless filter parameters build a ChromaDB ``where`` clause so
         only matching documents are considered.
+
+        When *sort_by_date* is True, results above ``min_score`` are
+        re-sorted by creation date (newest first).  This is useful for
+        queries like "letzte Rechnung" where recency matters more than
+        marginal score differences.
         """
         query_embedding = embed_query(query)
 
@@ -79,12 +85,77 @@ class Searcher:
             }
             if meta.get("paperless_doc_id"):
                 entry["paperless_doc_id"] = meta["paperless_doc_id"]
+            if meta.get("created"):
+                entry["created"] = meta["created"]
             output.append(entry)
 
         if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
 
-        return output[:top_k]
+        output = output[:top_k]
+
+        if sort_by_date:
+            output.sort(
+                key=lambda r: r.get("created", ""),
+                reverse=True,
+            )
+
+        return output
+
+    # ------------------------------------------------------------------
+    # Hybrid search (semantic + keyword)
+    # ------------------------------------------------------------------
+
+    def hybrid_search(
+        self, query: str, top_k: int = 5,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
+        sort_by_date: bool = False,
+        min_score: float = 0.0,
+    ) -> list[dict]:
+        """Run semantic **and** keyword search, merge and deduplicate.
+
+        This handles queries that mix conceptual terms with exact
+        identifiers (e.g. "Kaufvertrag Grundstück Montabaur").
+        Keyword hits that don't appear in the semantic results are
+        appended; duplicates are resolved by keeping the higher score.
+        """
+        sem_results = self.semantic_search(
+            query, top_k=top_k,
+            paperless_tags=paperless_tags,
+            paperless_correspondent=paperless_correspondent,
+            paperless_created_year=paperless_created_year,
+        )
+        kw_results = self.keyword_search(
+            query, top_k=top_k,
+            paperless_tags=paperless_tags,
+            paperless_correspondent=paperless_correspondent,
+            paperless_created_year=paperless_created_year,
+        )
+
+        # Merge: use (source, file_path, section) as dedup key
+        seen: dict[str, dict] = {}
+        for r in sem_results:
+            key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
+            seen[key] = r
+
+        for r in kw_results:
+            key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
+            if key not in seen or r["score"] > seen[key]["score"]:
+                seen[key] = r
+
+        merged = list(seen.values())
+
+        if min_score > 0:
+            merged = [r for r in merged if r["score"] >= min_score]
+
+        if sort_by_date:
+            merged.sort(key=lambda r: r.get("created", ""), reverse=True)
+        else:
+            merged.sort(key=lambda r: r["score"], reverse=True)
+
+        return merged[:top_k]
 
     # ------------------------------------------------------------------
     # Link-graph expansion
@@ -213,6 +284,8 @@ class Searcher:
                 }
                 if meta.get("paperless_doc_id"):
                     entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                if meta.get("created"):
+                    entry["created"] = meta["created"]
                 return entry
         except Exception:
             pass
@@ -229,6 +302,9 @@ class Searcher:
         paperless_created_year: Optional[int] = None,
     ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
+
+        Multi-word queries use AND logic: every word must appear in the
+        document.  Single-word queries match as a substring as before.
 
         Scoring is based on match location, word-boundary matches, and
         frequency so that results containing the query more often or as a
@@ -257,15 +333,28 @@ class Searcher:
                 return []
 
         query_lower = query.lower()
+        terms = query_lower.split()
+        multi_word = len(terms) > 1
+
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
+        term_patterns = [
+            re.compile(r"\b" + re.escape(t) + r"\b", re.IGNORECASE)
+            for t in terms
+        ] if multi_word else [word_pattern]
+
         results: list[dict] = []
         seen: set[str] = set()
 
         # 1) Filename matches
         for doc_key, source in self.indexer._file_sources.items():
             fp = self.indexer._file_path_from_key(doc_key)
-            if query_lower not in fp.lower():
-                continue
+            fp_lower = fp.lower()
+            if multi_word:
+                if not all(t in fp_lower for t in terms):
+                    continue
+            else:
+                if query_lower not in fp_lower:
+                    continue
             if has_filter:
                 if source != "paperless":
                     continue
@@ -308,13 +397,20 @@ class Searcher:
                 get_kwargs["where"] = where
             all_docs = self.collection.get(**get_kwargs)
             for i, doc in enumerate(all_docs["documents"] or []):
-                if query_lower not in doc.lower():
-                    continue
+                doc_lower = doc.lower()
+                if multi_word:
+                    if not all(t in doc_lower for t in terms):
+                        continue
+                else:
+                    if query_lower not in doc_lower:
+                        continue
                 meta = all_docs["metadatas"][i]
                 key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
                 if key in seen:
                     continue
-                score = self._keyword_score(doc, query_lower, word_pattern)
+                score = self._keyword_score_multi(
+                    doc, terms, term_patterns,
+                ) if multi_word else self._keyword_score(doc, query_lower, word_pattern)
                 entry: dict = {
                     "file_path": meta["file_path"],
                     "section": meta.get("section", ""),
@@ -352,6 +448,42 @@ class Searcher:
         pos = doc_lower.find(query_lower)
         pos_bonus = 0.05 if pos >= 0 and pos < len(doc) * 0.2 else 0.0
         return round(0.70 + freq_bonus + word_bonus + pos_bonus, 4)
+
+    @staticmethod
+    def _keyword_score_multi(
+        doc: str, terms: list[str], term_patterns: list[re.Pattern[str]],
+    ) -> float:
+        """Score a document against multiple AND-ed keyword terms.
+
+        Base score is 0.70.  Per-term bonuses (averaged):
+        - frequency:  +0.03 per occurrence (max +0.15)
+        - whole-word: +0.05 if at least one word-boundary match
+        - proximity:  +0.05 if any two terms appear within 200 chars of each other
+        """
+        doc_lower = doc.lower()
+        total_freq = 0.0
+        total_word = 0.0
+        positions: list[int] = []
+        for term, pattern in zip(terms, term_patterns):
+            count = doc_lower.count(term)
+            total_freq += min(count * 0.03, 0.15)
+            if pattern.search(doc):
+                total_word += 0.05
+            pos = doc_lower.find(term)
+            if pos >= 0:
+                positions.append(pos)
+        n = len(terms)
+        avg_freq = total_freq / n
+        avg_word = total_word / n
+        # Proximity bonus: any two matched terms within 200 chars
+        proximity_bonus = 0.0
+        if len(positions) >= 2:
+            positions.sort()
+            for j in range(len(positions) - 1):
+                if positions[j + 1] - positions[j] < 200:
+                    proximity_bonus = 0.05
+                    break
+        return round(0.70 + avg_freq + avg_word + proximity_bonus, 4)
 
     # ------------------------------------------------------------------
     # Single note retrieval
