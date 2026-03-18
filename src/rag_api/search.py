@@ -855,7 +855,7 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         _LOOKUP_COMPLETE["doctypes"] = False
         _LOOKUP_COMPLETE["corrs"] = False
 
-    if not _TAG_NAME_TO_ID:
+    if not _LOOKUP_COMPLETE["tags"] and not _TAG_NAME_TO_ID:
         try:
             url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
             params: Optional[dict] = {"page_size": 500}
@@ -876,7 +876,7 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         except Exception:
             _LOOKUP_COMPLETE["tags"] = False
 
-    if not _DOCTYPE_NAME_TO_ID:
+    if not _LOOKUP_COMPLETE["doctypes"] and not _DOCTYPE_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/document_types/"
             params = {"page_size": 500}
@@ -897,7 +897,7 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         except Exception:
             _LOOKUP_COMPLETE["doctypes"] = False
 
-    if not _CORR_NAME_TO_ID:
+    if not _LOOKUP_COMPLETE["corrs"] and not _CORR_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/correspondents/"
             params = {"page_size": 500}
