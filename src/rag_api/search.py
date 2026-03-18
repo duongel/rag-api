@@ -118,14 +118,25 @@ class Searcher:
         """Keep only the best-scoring entry per source/file/section tuple."""
         deduped: dict[str, dict] = {}
         for result in results:
-            key = (
-                f"{result.get('source', 'obsidian')}::"
-                f"{result['file_path']}#{result.get('section', '')}"
-            )
+            key = Searcher._result_key(result)
             current = deduped.get(key)
             if current is None or result["score"] > current["score"]:
                 deduped[key] = result
         return list(deduped.values())
+
+    @staticmethod
+    def _result_key(result: dict, *, collapse_paperless_sections: bool = False) -> str:
+        """Build a stable dedup key for search results.
+
+        When ``collapse_paperless_sections`` is enabled, Paperless hits are
+        deduplicated on document level (source + file path) so filename hits
+        and chunk hits cannot appear as duplicates for the same PDF.
+        """
+        source = result.get("source", "obsidian")
+        file_path = result["file_path"]
+        if collapse_paperless_sections and source == "paperless":
+            return f"{source}::{file_path}"
+        return f"{source}::{file_path}#{result.get('section', '')}"
 
     # ------------------------------------------------------------------
     # Hybrid search (semantic + keyword)
@@ -176,11 +187,9 @@ class Searcher:
         content words (e.g. "summiere alle kosten für den vw golf"
         becomes keyword query "kosten vw golf").
 
-        After merging, a **keyword coverage re-rank** adjusts each
-        result's score based on how many expanded query terms appear in
-        the document.  This penalises results that match semantically
-        but lack the actual content words the user asked for (e.g.
-        "Kilometerstand" for a "Kosten" query).
+        After merging, a **keyword/synonym re-rank** adds a small boost
+        for exact term coverage and additional synonym coverage. Exact
+        matches are never penalized for not containing all synonyms.
         """
         # When sorting by date we need wider candidate pools so that
         # truly newest documents are captured even when they aren't
@@ -214,19 +223,21 @@ class Searcher:
             paperless_document_type=paperless_document_type,
         )
 
-        # Merge: use (source, file_path, section) as dedup key
+        # Merge result sets using stable dedup keys.
+        # Paperless items are deduped by document path so filename and chunk
+        # matches for the same PDF do not appear twice.
         seen: dict[str, dict] = {}
         sem_keys: set[str] = set()
         kw_keys: set[str] = set()
 
         for r in sem_results:
-            key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
+            key = self._result_key(r, collapse_paperless_sections=True)
             if key not in seen or r["score"] > seen[key]["score"]:
                 seen[key] = r
             sem_keys.add(key)
 
         for r in kw_results:
-            key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
+            key = self._result_key(r, collapse_paperless_sections=True)
             kw_keys.add(key)
             if key not in seen or r["score"] > seen[key]["score"]:
                 seen[key] = r
@@ -237,21 +248,30 @@ class Searcher:
             seen[key] = dict(seen[key])
             seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
 
-        # ── Keyword coverage re-rank ──
-        # Expand content words with synonyms, then check how many
-        # expanded terms appear in each document.  Results with low
-        # coverage get a score penalty (up to −30 %).
-        expanded = set(content_words)
+        # ── Keyword/synonym re-rank ──
+        # Exact content words should never be penalized because a synonym is
+        # missing. Instead, exact and synonym hits provide additive boosts.
+        exact_terms = set(content_words)
+        synonym_terms: set[str] = set()
         for w in content_words:
-            expanded.update(self._QUERY_EXPANSIONS.get(w, []))
-        if expanded:
+            synonym_terms.update(self._QUERY_EXPANSIONS.get(w, []))
+        synonym_terms -= exact_terms
+
+        if exact_terms or synonym_terms:
             for key, r in seen.items():
                 doc_lower = r.get("content", "").lower()
-                matched = sum(1 for t in expanded if t in doc_lower)
-                coverage = matched / len(expanded)
-                # 0 coverage → ×0.7, full coverage → ×1.0
                 r = dict(r)
-                r["score"] = round(r["score"] * (0.7 + 0.3 * coverage), 4)
+
+                exact_cov = 0.0
+                if exact_terms:
+                    exact_cov = sum(1 for t in exact_terms if t in doc_lower) / len(exact_terms)
+
+                synonym_cov = 0.0
+                if synonym_terms:
+                    synonym_cov = sum(1 for t in synonym_terms if t in doc_lower) / len(synonym_terms)
+
+                bonus = (0.05 * exact_cov) + (0.10 * synonym_cov)
+                r["score"] = round(r["score"] + bonus, 4)
                 seen[key] = r
 
         merged = list(seen.values())
@@ -483,7 +503,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}#")
+                seen.add(self._result_key({"source": source, "file_path": fp}, collapse_paperless_sections=True))
                 continue
             base = Path(VAULT_PATH)
             full_path = base / fp
@@ -499,7 +519,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}#")
+                seen.add(self._result_key({"source": source, "file_path": fp}, collapse_paperless_sections=True))
 
         # 2) Content matches — always case-insensitive via full scan
         try:
@@ -526,7 +546,7 @@ class Searcher:
                         doc_lower = doc.lower()
                         if not any(t in doc_lower for t in terms):
                             continue
-                        key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
+                        key = self._result_key(meta, collapse_paperless_sections=True)
                         if key in seen:
                             continue
                         score = self._keyword_score_multi(doc, terms, term_patterns)
@@ -550,7 +570,7 @@ class Searcher:
                     if query_lower not in doc_lower:
                         continue
                     meta = all_docs["metadatas"][i]
-                    key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
+                    key = self._result_key(meta, collapse_paperless_sections=True)
                     if key in seen:
                         continue
                     score = self._keyword_score(doc, query_lower, word_pattern)

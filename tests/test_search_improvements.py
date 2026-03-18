@@ -329,17 +329,59 @@ class TestHybridSearch:
 
         sem_results = [
             {"file_path": "a.pdf", "section": "", "score": 0.95, "source": "paperless", "match_type": "semantic", "content": "test content a"},
-            {"file_path": "b.pdf", "section": "", "score": 0.65, "source": "paperless", "match_type": "semantic", "content": "test content b"},
+            {"file_path": "b.pdf", "section": "", "score": 0.60, "source": "paperless", "match_type": "semantic", "content": "test content b"},
         ]
         kw_results = []
 
         with patch.object(searcher, "semantic_search", return_value=sem_results), \
              patch.object(searcher, "keyword_search", return_value=kw_results):
-            # Coverage for "test": both docs contain "test" → full coverage → ×1.0
             results = searcher.hybrid_search("test", top_k=5, min_score=0.70)
 
         assert len(results) == 1
         assert results[0]["file_path"] == "a.pdf"
+
+    def test_hybrid_dedups_paperless_filename_and_chunk_hits(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = []
+        kw_results = [
+            {"file_path": "invoice.pdf", "section": "", "score": 1.0, "source": "paperless", "match_type": "filename", "content": ""},
+            {"file_path": "invoice.pdf", "section": "chunk-7", "score": 0.9, "source": "paperless", "match_type": "content", "content": "invoice total 500 eur"},
+            {"file_path": "other.pdf", "section": "chunk-1", "score": 0.8, "source": "paperless", "match_type": "content", "content": "other content"},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=kw_results):
+            results = searcher.hybrid_search("invoice", top_k=5)
+
+        invoice_hits = [r for r in results if r["file_path"] == "invoice.pdf"]
+        assert len(invoice_hits) == 1
+        assert invoice_hits[0]["match_type"] == "filename"
+
+    def test_hybrid_exact_hits_are_not_penalized_for_missing_synonyms(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {
+                "file_path": "kosten.pdf",
+                "section": "",
+                "score": 0.90,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": "Die Kosten sind im Vertrag dokumentiert.",
+            }
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("kosten", top_k=5)
+
+        # Exact term match should be boosted (or at least never reduced)
+        assert results[0]["score"] >= 0.90
 
     def test_hybrid_respects_sort_by_date(self):
         from rag_api.search import Searcher
