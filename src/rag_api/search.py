@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .config import VAULT_PATH, DATA_SOURCES
+from .config import VAULT_PATH, DATA_SOURCES, PAPERLESS_URL, PAPERLESS_TOKEN
 from .embeddings import embed_query
 from .indexer import Indexer
 
@@ -43,6 +43,7 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
         sort_by_date: bool = False,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
@@ -60,11 +61,18 @@ class Searcher:
 
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
+            paperless_document_type,
         )
+
+        # When sorting by date we need a wider candidate pool so that the
+        # truly newest documents are captured even when they aren't among
+        # the top-k most semantically similar results.  Paperless docs
+        # average ~3 chunks each, so we need n_results >> doc_count.
+        fetch_k = max(top_k * 20, 200) if sort_by_date and where else top_k
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
-            "n_results": min(top_k, self.collection.count() or 1),
+            "n_results": min(fetch_k, self.collection.count() or 1),
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
@@ -92,15 +100,13 @@ class Searcher:
         if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
 
-        output = output[:top_k]
-
         if sort_by_date:
             output.sort(
                 key=lambda r: r.get("created", ""),
                 reverse=True,
             )
 
-        return output
+        return output[:top_k]
 
     # ------------------------------------------------------------------
     # Hybrid search (semantic + keyword)
@@ -139,6 +145,7 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
         sort_by_date: bool = False,
         min_score: float = 0.0,
     ) -> list[dict]:
@@ -156,10 +163,11 @@ class Searcher:
         "Kilometerstand" for a "Kosten" query).
         """
         sem_results = self.semantic_search(
-            query, top_k=top_k,
+            query, top_k=top_k * 3 if sort_by_date else top_k,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
+            paperless_document_type=paperless_document_type,
         )
 
         # Build a keyword query from content words only
@@ -170,10 +178,11 @@ class Searcher:
         kw_query = " ".join(content_words) if content_words else query
 
         kw_results = self.keyword_search(
-            kw_query, top_k=top_k,
+            kw_query, top_k=top_k * 3 if sort_by_date else top_k,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
+            paperless_document_type=paperless_document_type,
         )
 
         # Merge: use (source, file_path, section) as dedup key
@@ -371,6 +380,7 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
     ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
 
@@ -386,6 +396,7 @@ class Searcher:
         """
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
+            paperless_document_type,
         )
         has_filter = where is not None
 
@@ -611,18 +622,45 @@ def _build_chromadb_filters(
     tags: Optional[list[str]] = None,
     correspondent: Optional[str] = None,
     created_year: Optional[int] = None,
+    document_type: Optional[str] = None,
 ) -> Optional[dict]:
-    """Build a coarse ChromaDB ``where`` filter from Paperless parameters.
+    """Build a ChromaDB ``where`` filter by querying the Paperless API first.
 
-    Tags are matched via ``ptag_<name>`` metadata keys (exact, case-insensitive).
-    Correspondent is matched via ``correspondent_name_lc`` (exact, case-insensitive).
-    Year is matched via ``created_year`` (exact integer equality).
+    When Paperless credentials are configured and at least one filter is set,
+    this function queries the Paperless REST API to obtain the exact set of
+    matching document IDs.  The IDs are turned into a ChromaDB ``$or``
+    filter on ``paperless_doc_id``.
+
+    This is more accurate than replicating Paperless metadata in ChromaDB
+    because Paperless handles tags, document types, correspondents, and
+    date ranges authoritatively — including manually-assigned tags that
+    don't appear anywhere in the document text.
+
+    Falls back to basic ``{"source": "paperless"}`` if no filters are
+    provided, and to ``None`` if Paperless is not configured.
     """
-    if not any([tags, correspondent, created_year]):
+    has_filter = any([tags, correspondent, created_year, document_type])
+    if not has_filter:
         return None
 
-    conditions: list[dict] = [{"source": "paperless"}]
+    # Try Paperless API pre-filter (authoritative)
+    if PAPERLESS_URL and PAPERLESS_TOKEN:
+        doc_ids = _query_paperless_api(
+            tags=tags,
+            correspondent=correspondent,
+            created_year=created_year,
+            document_type=document_type,
+        )
+        if doc_ids is not None:
+            if not doc_ids:
+                # Paperless returned 0 matches → short-circuit
+                return {"paperless_doc_id": "__NO_MATCH__"}
+            if len(doc_ids) == 1:
+                return {"paperless_doc_id": doc_ids[0]}
+            return {"$or": [{"paperless_doc_id": did} for did in doc_ids]}
 
+    # Fallback: basic ChromaDB metadata filter (legacy)
+    conditions: list[dict] = [{"source": "paperless"}]
     if created_year is not None:
         conditions.append({"created_year": created_year})
     if correspondent:
@@ -630,5 +668,149 @@ def _build_chromadb_filters(
     if tags:
         for tag in tags:
             conditions.append({f"ptag_{tag.lower()}": 1})
-
+    if document_type:
+        conditions.append({"document_type_name_lc": document_type.lower()})
     return {"$and": conditions} if len(conditions) > 1 else conditions[0]
+
+
+# ---------------------------------------------------------------------------
+# Paperless API pre-filter
+# ---------------------------------------------------------------------------
+
+# Cache: tag name (lowercase) → tag ID
+_TAG_NAME_TO_ID: dict[str, int] = {}
+# Cache: document type name (lowercase) → type ID
+_DOCTYPE_NAME_TO_ID: dict[str, int] = {}
+# Cache: correspondent name (lowercase) → correspondent ID
+_CORR_NAME_TO_ID: dict[str, int] = {}
+
+
+def _ensure_paperless_lookups() -> None:
+    """Lazily fetch and cache Paperless tags / document types / correspondents."""
+    import requests
+
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+    if not _TAG_NAME_TO_ID:
+        try:
+            url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
+            params: Optional[dict] = {"page_size": 500}
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    break
+                data = resp.json()
+                for t in data.get("results", []):
+                    name = str(t.get("name", "")).strip()
+                    if name:
+                        _TAG_NAME_TO_ID[name.lower()] = t["id"]
+                url = data.get("next")
+                params = None
+        except Exception:
+            pass
+
+    if not _DOCTYPE_NAME_TO_ID:
+        try:
+            resp = requests.get(
+                f"{PAPERLESS_URL}/api/document_types/",
+                params={"page_size": 500}, headers=headers, timeout=10,
+            )
+            if resp.ok:
+                for dt in resp.json().get("results", []):
+                    name = str(dt.get("name", "")).strip()
+                    if name:
+                        _DOCTYPE_NAME_TO_ID[name.lower()] = dt["id"]
+        except Exception:
+            pass
+
+    if not _CORR_NAME_TO_ID:
+        try:
+            url = f"{PAPERLESS_URL}/api/correspondents/"
+            params = {"page_size": 500}
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    break
+                data = resp.json()
+                for c in data.get("results", []):
+                    name = str(c.get("name", "")).strip()
+                    if name:
+                        _CORR_NAME_TO_ID[name.lower()] = c["id"]
+                url = data.get("next")
+                params = None
+        except Exception:
+            pass
+
+
+def _query_paperless_api(
+    tags: Optional[list[str]] = None,
+    correspondent: Optional[str] = None,
+    created_year: Optional[int] = None,
+    document_type: Optional[str] = None,
+) -> Optional[list[str]]:
+    """Query the Paperless REST API and return matching document IDs.
+
+    Returns None on API failure (caller should fall back to ChromaDB
+    metadata).  Returns an empty list when the query matched zero
+    documents.
+    """
+    import requests
+
+    _ensure_paperless_lookups()
+
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+    params: dict = {"page_size": 500, "fields": "id"}
+
+    # Resolve tag names → IDs
+    if tags:
+        tag_ids = []
+        for tag_name in tags:
+            tid = _TAG_NAME_TO_ID.get(tag_name.lower())
+            if tid is None:
+                logger.warning("Paperless tag '%s' not found", tag_name)
+                return []  # unknown tag → 0 matches
+            tag_ids.append(str(tid))
+        params["tags__id__all"] = ",".join(tag_ids)
+
+    # Resolve document type name → ID
+    if document_type:
+        dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
+        if dtid is None:
+            logger.warning("Paperless document type '%s' not found", document_type)
+            return []
+        params["document_type__id__in"] = str(dtid)
+
+    # Resolve correspondent name → ID
+    if correspondent:
+        cid = _CORR_NAME_TO_ID.get(correspondent.lower())
+        if cid is None:
+            logger.warning("Paperless correspondent '%s' not found", correspondent)
+            return []
+        params["correspondent__id"] = str(cid)
+
+    # Date range filter
+    if created_year:
+        params["query"] = f"created:[{created_year}-01-01 TO {created_year}-12-31]"
+
+    try:
+        all_ids: list[str] = []
+        url: Optional[str] = f"{PAPERLESS_URL}/api/documents/"
+        page_params: Optional[dict] = params
+        while url:
+            resp = requests.get(url, params=page_params, headers=headers, timeout=15)
+            if not resp.ok:
+                logger.error("Paperless API returned %d", resp.status_code)
+                return None
+            data = resp.json()
+            for doc in data.get("results", []):
+                all_ids.append(str(doc["id"]))
+            url = data.get("next")
+            page_params = None  # next URL already contains params
+        logger.info(
+            "Paperless pre-filter: %d docs (tags=%s type=%s year=%s)",
+            len(all_ids), tags, document_type, created_year,
+        )
+        return all_ids
+    except Exception as e:
+        logger.error("Paperless API query failed: %s", e)
+        return None

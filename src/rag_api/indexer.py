@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _EMBED_BATCH = 64
 _PAPERLESS_TAG_NAME_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_CORRESPONDENT_CACHE: dict[str, tuple[str, float]] = {}
+_PAPERLESS_DOCTYPE_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_CACHE_TTL_SECONDS = 300.0
 
 
@@ -204,6 +205,15 @@ class Indexer:
                     meta["tag_names"] = ", ".join(tag_names)
                     for tn in tag_names:
                         meta[f"ptag_{tn.lower()}"] = 1
+        if doc.get("document_type"):
+            meta["document_type"] = str(doc["document_type"])
+            if PAPERLESS_URL and PAPERLESS_TOKEN:
+                dt_name = _paperless_document_type_name(
+                    doc["document_type"], PAPERLESS_URL, PAPERLESS_TOKEN
+                )
+                if dt_name:
+                    meta["document_type_name"] = dt_name
+                    meta["document_type_name_lc"] = dt_name.lower()
         if doc.get("created"):
             meta["created"] = doc["created"]
             try:
@@ -222,6 +232,8 @@ class Indexer:
                     "correspondent_name_lc": meta.get("correspondent_name_lc"),
                     "tags": meta.get("tags"),
                     "tag_names": meta.get("tag_names"),
+                    "document_type": meta.get("document_type"),
+                    "document_type_name": meta.get("document_type_name"),
                     "created": meta.get("created"),
                     "created_year": meta.get("created_year"),
                 },
@@ -385,22 +397,26 @@ class Indexer:
             logger.warning("Paperless API not configured — skipping reindex")
             return 0
 
-        # Clear caches so renamed tags/correspondents are picked up on each reindex
+        # Clear caches so renamed tags/correspondents/types are picked up on each reindex
         _PAPERLESS_TAG_NAME_CACHE.clear()
         _PAPERLESS_CORRESPONDENT_CACHE.clear()
+        _PAPERLESS_DOCTYPE_CACHE.clear()
 
         import requests
         headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
         page_size = 500
-        fields = "id,content,archive_filename,title,correspondent,tags,created"
+        fields = "id,content,archive_filename,title,correspondent,tags,document_type,created"
 
         # Pre-warm caches in parallel with the first document page fetch
-        with ThreadPoolExecutor(max_workers=3) as prefetch_pool:
+        with ThreadPoolExecutor(max_workers=4) as prefetch_pool:
             tag_future = prefetch_pool.submit(
                 _prefetch_all_tags, PAPERLESS_URL, PAPERLESS_TOKEN
             )
             corr_future = prefetch_pool.submit(
                 _prefetch_all_correspondents, PAPERLESS_URL, PAPERLESS_TOKEN
+            )
+            dt_future = prefetch_pool.submit(
+                _prefetch_all_document_types, PAPERLESS_URL, PAPERLESS_TOKEN
             )
 
             # Fetch page 1 to discover total count
@@ -412,9 +428,10 @@ class Indexer:
                 timeout=30,
             )
 
-            # Wait for all three
+            # Wait for all four
             tag_future.result()
             corr_future.result()
+            dt_future.result()
             try:
                 resp = page1_future.result()
             except Exception as e:
@@ -696,6 +713,9 @@ def _with_paperless_metadata_text(content: str, meta: dict) -> str:
     if tag_value:
         tag_line = f"Tags: {tag_value}"
         lines.extend([tag_line] * 5)
+    dt_name = meta.get("document_type_name")
+    if dt_name:
+        lines.append(f"Document Type: {dt_name}")
     if not lines:
         return content
     return "Paperless Metadata\n" + "\n".join(lines) + "\n\n" + content
@@ -845,6 +865,56 @@ def _paperless_correspondent_name(
             name = str(resp.json().get("name", "")).strip()
             if name:
                 _PAPERLESS_CORRESPONDENT_CACHE[cid] = (name, now)
+                return name
+    except Exception:
+        pass
+    return cached[0] if cached else ""
+
+
+def _prefetch_all_document_types(paperless_url: str, token: str) -> None:
+    """Fetch all document types in one request and warm the cache."""
+    import requests
+    now = time.monotonic()
+    try:
+        resp = requests.get(
+            f"{paperless_url}/api/document_types/",
+            params={"page_size": 500},
+            headers={"Authorization": f"Token {token}"},
+            timeout=10,
+        )
+        if resp.ok:
+            for dt in resp.json().get("results", []):
+                dtid = str(dt.get("id", ""))
+                name = str(dt.get("name", "")).strip()
+                if dtid and name:
+                    _PAPERLESS_DOCTYPE_CACHE[dtid] = (name, now)
+    except Exception:
+        pass
+    logger.info("Pre-fetched %d document type names", len(_PAPERLESS_DOCTYPE_CACHE))
+
+
+def _paperless_document_type_name(
+    dt_id: Union[int, str], paperless_url: str, token: str
+) -> str:
+    """Resolve a Paperless document type ID to its display name, with TTL cache."""
+    import requests
+
+    did = str(dt_id)
+    now = time.monotonic()
+    cached = _PAPERLESS_DOCTYPE_CACHE.get(did)
+    if cached and now - cached[1] < _PAPERLESS_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        resp = requests.get(
+            f"{paperless_url}/api/document_types/{did}/",
+            headers={"Authorization": f"Token {token}"},
+            timeout=5,
+        )
+        if resp.ok:
+            name = str(resp.json().get("name", "")).strip()
+            if name:
+                _PAPERLESS_DOCTYPE_CACHE[did] = (name, now)
                 return name
     except Exception:
         pass

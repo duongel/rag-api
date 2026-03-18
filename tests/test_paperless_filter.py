@@ -6,23 +6,110 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# _build_chromadb_filters
+# _build_chromadb_filters — Paperless API pre-filter path
 # ---------------------------------------------------------------------------
 
 
 class TestBuildChromadbFilters:
+    """Test _build_chromadb_filters with both Paperless API and fallback paths."""
+
     def test_returns_none_when_no_filters(self):
         from rag_api.search import _build_chromadb_filters
 
         assert _build_chromadb_filters() is None
 
-    def test_single_tag_filter(self):
+    # -- Paperless API pre-filter path --
+
+    @patch("rag_api.search._query_paperless_api", return_value=["42", "100", "200"])
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_tag_multiple_results(self, mock_query):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(tags=["etron"])
+        mock_query.assert_called_once_with(
+            tags=["etron"], correspondent=None, created_year=None, document_type=None,
+        )
+        assert result == {"$or": [
+            {"paperless_doc_id": "42"},
+            {"paperless_doc_id": "100"},
+            {"paperless_doc_id": "200"},
+        ]}
+
+    @patch("rag_api.search._query_paperless_api", return_value=["42"])
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_single_result_returns_direct_filter(self, mock_query):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(tags=["etron"])
+        assert result == {"paperless_doc_id": "42"}
+
+    @patch("rag_api.search._query_paperless_api", return_value=[])
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_no_matches_returns_no_match(self, mock_query):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(tags=["unknown"])
+        assert result == {"paperless_doc_id": "__NO_MATCH__"}
+
+    @patch("rag_api.search._query_paperless_api", return_value=["10", "20"])
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_combined_filters(self, mock_query):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(
+            tags=["etron"], correspondent="Audi", created_year=2025,
+        )
+        mock_query.assert_called_once_with(
+            tags=["etron"], correspondent="Audi", created_year=2025, document_type=None,
+        )
+        assert result == {"$or": [
+            {"paperless_doc_id": "10"},
+            {"paperless_doc_id": "20"},
+        ]}
+
+    @patch("rag_api.search._query_paperless_api", return_value=["42", "55"])
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_document_type_filter(self, mock_query):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(document_type="Rechnung")
+        mock_query.assert_called_once_with(
+            tags=None, correspondent=None, created_year=None, document_type="Rechnung",
+        )
+        assert result == {"$or": [
+            {"paperless_doc_id": "42"},
+            {"paperless_doc_id": "55"},
+        ]}
+
+    # -- API failure → legacy fallback --
+
+    @patch("rag_api.search._query_paperless_api", return_value=None)
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_api_failure_falls_back_to_legacy(self, mock_query):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron"])
         assert result == {"$and": [{"source": "paperless"}, {"ptag_etron": 1}]}
 
-    def test_multiple_tags_filter(self):
+    # -- Legacy path (no Paperless credentials) --
+
+    @patch("rag_api.search.PAPERLESS_TOKEN", "")
+    @patch("rag_api.search.PAPERLESS_URL", "")
+    def test_fallback_single_tag(self):
+        from rag_api.search import _build_chromadb_filters
+
+        result = _build_chromadb_filters(tags=["etron"])
+        assert result == {"$and": [{"source": "paperless"}, {"ptag_etron": 1}]}
+
+    @patch("rag_api.search.PAPERLESS_TOKEN", "")
+    @patch("rag_api.search.PAPERLESS_URL", "")
+    def test_fallback_multiple_tags(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(tags=["etron", "rechnung"])
@@ -34,19 +121,25 @@ class TestBuildChromadbFilters:
             ]
         }
 
-    def test_year_filter(self):
+    @patch("rag_api.search.PAPERLESS_TOKEN", "")
+    @patch("rag_api.search.PAPERLESS_URL", "")
+    def test_fallback_year(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(created_year=2025)
         assert result == {"$and": [{"source": "paperless"}, {"created_year": 2025}]}
 
-    def test_correspondent_filter_lowercased(self):
+    @patch("rag_api.search.PAPERLESS_TOKEN", "")
+    @patch("rag_api.search.PAPERLESS_URL", "")
+    def test_fallback_correspondent(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(correspondent="Audi")
         assert result == {"$and": [{"source": "paperless"}, {"correspondent_name_lc": "audi"}]}
 
-    def test_combined_filters(self):
+    @patch("rag_api.search.PAPERLESS_TOKEN", "")
+    @patch("rag_api.search.PAPERLESS_URL", "")
+    def test_fallback_combined(self):
         from rag_api.search import _build_chromadb_filters
 
         result = _build_chromadb_filters(
@@ -103,7 +196,12 @@ def _fake_paperless_api(url, **kwargs):
 
 @pytest.fixture()
 def searcher():
-    """Create a Searcher with an in-memory ChromaDB and two indexed docs with metadata."""
+    """Create a Searcher with an in-memory ChromaDB and two indexed docs with metadata.
+
+    Patches PAPERLESS_URL/TOKEN to empty so _build_chromadb_filters uses
+    the legacy ChromaDB metadata fallback path (matching the metadata set
+    up in this fixture).
+    """
     import chromadb
 
     ephemeral = chromadb.EphemeralClient()
@@ -112,6 +210,8 @@ def searcher():
         patch("rag_api.indexer.embed_documents", side_effect=_fake_embed),
         patch("rag_api.indexer.chromadb.PersistentClient", return_value=ephemeral),
         patch("requests.get", side_effect=_fake_paperless_api),
+        patch("rag_api.search.PAPERLESS_URL", ""),
+        patch("rag_api.search.PAPERLESS_TOKEN", ""),
     ):
         from rag_api.indexer import Indexer, _PAPERLESS_TAG_NAME_CACHE, _PAPERLESS_CORRESPONDENT_CACHE
         from rag_api.search import Searcher
