@@ -267,6 +267,40 @@ class TestDateSorting:
         assert results[0]["file_path"] == "b.pdf"
         assert results[1]["file_path"] == "a.pdf"
 
+    def test_sort_by_date_expands_links_from_full_candidate_pool(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = MagicMock()
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 6
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2", "id3", "id4", "id5", "id6"]],
+            "documents": [["d1", "d2", "d3", "d4", "d5", "d6"]],
+            "metadatas": [[
+                {"file_path": "a.pdf", "source": "paperless", "created": "2024-01-01", "section": "1"},
+                {"file_path": "b.pdf", "source": "paperless", "created": "2024-02-01", "section": "1"},
+                {"file_path": "c.pdf", "source": "paperless", "created": "2025-03-01", "section": "1"},
+                {"file_path": "d.pdf", "source": "paperless", "created": "2025-04-01", "section": "1"},
+                {"file_path": "e.pdf", "source": "paperless", "created": "2025-05-01", "section": "1"},
+                {"file_path": "f.pdf", "source": "paperless", "created": "2025-06-01", "section": "1"},
+            ]],
+            "distances": [[0.10, 0.11, 0.12, 0.13, 0.14, 0.15]],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.embed_query", return_value=[0.1] * 768), \
+             patch.object(searcher, "_expand_with_links", side_effect=lambda results, *_: results) as mock_expand:
+            searcher.semantic_search("test", top_k=2, sort_by_date=True, expand_links=True)
+
+        # Date-sorted path should keep all semantic candidates as expansion seeds,
+        # not truncate to score top_k before date ordering.
+        assert len(mock_expand.call_args.args[0]) == 6
+
 
 # ---------------------------------------------------------------------------
 # Hybrid search
@@ -299,6 +333,22 @@ class TestHybridSearch:
             sort_by_date=True,
             min_score=0.0,
         )
+
+    def test_hybrid_keeps_min_score_for_post_merge_filtering(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        with patch.object(searcher, "semantic_search", return_value=[]) as mock_semantic, \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            searcher.hybrid_search(
+                "test query",
+                top_k=5,
+                sort_by_date=True,
+                min_score=0.8,
+            )
+
+        assert mock_semantic.call_args.kwargs["min_score"] == 0.0
 
     def test_hybrid_merges_semantic_and_keyword(self):
         from rag_api.search import Searcher

@@ -101,11 +101,16 @@ class Searcher:
             fetch_k = min(fetch_k * 2, corpus_size)
 
         if expand_links and not where:
-            # Only seed graph expansion with the best top_k semantic
-            # hits so that low-relevance tail results from the wider
-            # dedup window don't promote unrelated linked notes.
-            seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:top_k]
-            output = self._expand_with_links(seeds, query_embedding, top_k)
+            # For score-ranked search, only seed graph expansion with the
+            # best top_k semantic hits so low-relevance tails do not
+            # promote unrelated linked notes.
+            #
+            # For date-sorted search, keep the full widened semantic
+            # candidate pool so newer documents outside the score top_k
+            # are still eligible after date reordering.
+            seed_k = len(output) if sort_by_date else top_k
+            seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:seed_k]
+            output = self._expand_with_links(seeds, query_embedding, seed_k)
 
         if sort_by_date:
             if min_score > 0:
@@ -247,7 +252,9 @@ class Searcher:
             paperless_created_year=paperless_created_year,
             paperless_document_type=paperless_document_type,
             sort_by_date=sort_by_date,
-            min_score=min_score if sort_by_date else 0.0,
+            # Apply min_score after hybrid merge/rerank so documents are
+            # not dropped before cross-method and keyword/synonym boosts.
+            min_score=0.0,
         )
 
         # Build a keyword query from content words only
