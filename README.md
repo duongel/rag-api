@@ -67,6 +67,13 @@ docker pull ghcr.io/duongel/rag-api:latest
 
 [`SKILL.md`](./SKILL.md) contains endpoint documentation, curl examples, and copy-paste tool definitions for all major providers. Serve it as context to any LLM agent — no MCP server required.
 
+Recent search additions:
+
+- `POST /hybrid-search` combines semantic and keyword retrieval for mixed natural-language + exact-term queries
+- `sort_by_date: true` supports "latest / newest" document queries
+- `paperless_document_type` adds structured Paperless filtering by document type
+- For Paperless questions, agents should first set the strongest available `paperless_*` filters and only then run semantic, hybrid, or keyword search on that filtered subset
+
 | Provider | Format | Where to use |
 |---|---|---|
 | **OpenAI** | `functions` / `tools` array | ChatGPT, GPT-4o, Assistants API, Azure OpenAI |
@@ -77,6 +84,13 @@ docker pull ghcr.io/duongel/rag-api:latest
 **How it works:** Copy the tool definition for your provider from [`SKILL.md`](./SKILL.md) into your agent's tool/function list. The agent calls rag-api over HTTP to search your vault and Paperless documents. Works with any framework that supports HTTP tool calls (LangChain, CrewAI, n8n, custom agents).
 
 **Simplest approach:** Pass the full [`SKILL.md`](./SKILL.md) as system context — the agent discovers the endpoints and calls them directly.
+
+Typical endpoint choices:
+
+- Use `/search` for concepts, explanations, and broad semantic questions
+- Use `/keyword-search` for abbreviations, identifiers, filenames, and exact strings
+- Use `/hybrid-search` for queries like "Kaufvertrag Grundstück Montabaur" or "letzte Telekom Rechnung"
+- For Paperless queries, prefer `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, and `paperless_document_type` before ranking
 
 ## Architecture
 
