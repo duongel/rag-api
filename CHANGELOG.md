@@ -1,3 +1,11 @@
+## [1.9.3](https://github.com/duongel/rag-api/compare/v1.9.2...v1.9.3) (2026-03-18)
+
+
+### Bug Fixes
+
+* **indexer:** also check _file_hashes for legacy indexed docs ([2f8d411](https://github.com/duongel/rag-api/commit/2f8d411b46de5e093dc5b4c800a1296ef02d32a0))
+* **indexer:** skip redundant remove calls on fresh Paperless index ([c86b126](https://github.com/duongel/rag-api/commit/c86b126f4a3eb8e95589a210186938e2327926d5))
+
 ## [1.9.2](https://github.com/duongel/rag-api/compare/v1.9.1...v1.9.2) (2026-03-17)
 
 
