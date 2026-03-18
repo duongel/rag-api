@@ -234,7 +234,11 @@ class Indexer:
         with self._lock:
             prev_path = self._paperless_doc_paths.get(str(doc_id))
             path_changed = prev_path is not None and prev_path != file_path
-            previously_indexed = prev_path is not None or doc_key in self._api_content_hashes
+            previously_indexed = (
+                prev_path is not None
+                or doc_key in self._api_content_hashes
+                or doc_key in self._file_hashes
+            )
             if not path_changed and self._api_content_hashes.get(doc_key) == api_doc_hash:
                 return False  # unchanged
 
