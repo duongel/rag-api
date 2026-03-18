@@ -544,16 +544,24 @@ class TestPaperlessLookupFallback:
             _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
         )
 
-        # Simulate empty caches (API failure)
-        _TAG_NAME_TO_ID.clear()
-        _DOCTYPE_NAME_TO_ID.clear()
-        _CORR_NAME_TO_ID.clear()
+        # Save and restore global caches to avoid polluting other tests
+        saved = (dict(_TAG_NAME_TO_ID), dict(_DOCTYPE_NAME_TO_ID), dict(_CORR_NAME_TO_ID))
+        try:
+            _TAG_NAME_TO_ID.clear()
+            _DOCTYPE_NAME_TO_ID.clear()
+            _CORR_NAME_TO_ID.clear()
 
-        with patch("rag_api.search._ensure_paperless_lookups"):
-            result = _query_paperless_api(tags=["Rechnung"])
+            with patch("rag_api.search._ensure_paperless_lookups"):
+                result = _query_paperless_api(tags=["Rechnung"])
 
-        # Should return None (API failure) not [] (no matches)
-        assert result is None
+            assert result is None
+        finally:
+            _TAG_NAME_TO_ID.clear()
+            _TAG_NAME_TO_ID.update(saved[0])
+            _DOCTYPE_NAME_TO_ID.clear()
+            _DOCTYPE_NAME_TO_ID.update(saved[1])
+            _CORR_NAME_TO_ID.clear()
+            _CORR_NAME_TO_ID.update(saved[2])
 
     def test_nonempty_cache_unknown_tag_returns_empty(self):
         """If cache is populated but tag doesn't exist, return [] (genuine no match)."""
@@ -561,12 +569,21 @@ class TestPaperlessLookupFallback:
             _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
         )
 
-        _TAG_NAME_TO_ID.clear()
-        _TAG_NAME_TO_ID["vorhanden"] = 42
-        _DOCTYPE_NAME_TO_ID.clear()
-        _CORR_NAME_TO_ID.clear()
+        saved = (dict(_TAG_NAME_TO_ID), dict(_DOCTYPE_NAME_TO_ID), dict(_CORR_NAME_TO_ID))
+        try:
+            _TAG_NAME_TO_ID.clear()
+            _TAG_NAME_TO_ID["vorhanden"] = 42
+            _DOCTYPE_NAME_TO_ID.clear()
+            _CORR_NAME_TO_ID.clear()
 
-        with patch("rag_api.search._ensure_paperless_lookups"):
-            result = _query_paperless_api(tags=["Unbekannt"])
+            with patch("rag_api.search._ensure_paperless_lookups"):
+                result = _query_paperless_api(tags=["Unbekannt"])
 
-        assert result == []
+            assert result == []
+        finally:
+            _TAG_NAME_TO_ID.clear()
+            _TAG_NAME_TO_ID.update(saved[0])
+            _DOCTYPE_NAME_TO_ID.clear()
+            _DOCTYPE_NAME_TO_ID.update(saved[1])
+            _CORR_NAME_TO_ID.clear()
+            _CORR_NAME_TO_ID.update(saved[2])

@@ -299,6 +299,11 @@ def searcher():
     import chromadb
 
     ephemeral = chromadb.EphemeralClient()
+    # Ensure a clean collection even if a previous test leaked data
+    try:
+        ephemeral.delete_collection("rag_documents")
+    except Exception:
+        pass
 
     with (
         patch("rag_api.indexer.embed_documents", side_effect=_fake_embed),

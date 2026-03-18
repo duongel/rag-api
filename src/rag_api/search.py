@@ -65,11 +65,11 @@ class Searcher:
             paperless_document_type,
         )
 
-        # When sorting by date we need a wider candidate pool so that the
-        # truly newest documents are captured even when they aren't among
-        # the top-k most semantically similar results.  Paperless docs
-        # average ~3 chunks each, so we need n_results >> doc_count.
-        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k
+        # Fetch more than top_k so that deduplication (which collapses
+        # multiple chunks from the same document/section) doesn't
+        # under-fill the result set.  For date-sorting we need an even
+        # wider pool to capture truly newest documents.
+        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
@@ -189,7 +189,7 @@ class Searcher:
 
         sem_results = self.semantic_search(
             query,
-            top_k=candidate_k if sort_by_date else top_k,
+            top_k=candidate_k,
             expand_links=expand_links,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
