@@ -786,22 +786,22 @@ def _build_chromadb_filters(
 
     # Try Paperless API pre-filter (authoritative)
     if PAPERLESS_URL and PAPERLESS_TOKEN:
+        # Cap passed into the API helper so it can short-circuit
+        # pagination instead of fetching all matching IDs first.
+        _MAX_OR_IDS = 200
         doc_ids = _query_paperless_api(
             tags=tags,
             correspondent=correspondent,
             created_year=created_year,
             document_type=document_type,
+            max_ids=_MAX_OR_IDS,
         )
         if doc_ids is not None:
             if not doc_ids:
                 # Paperless returned 0 matches → short-circuit
                 return {"paperless_doc_id": "__NO_MATCH__"}
-            # Cap the number of IDs materialised into a single $or
-            # clause.  Very broad filters (e.g. a whole year) can
-            # match thousands of documents; a huge $or degrades
-            # ChromaDB query latency.  Fall back to legacy metadata
-            # filters if the set is too large.
-            _MAX_OR_IDS = 200
+            # Fall back to legacy metadata filters when the set is
+            # too large for a single $or clause.
             if len(doc_ids) > _MAX_OR_IDS:
                 logger.info(
                     "Paperless pre-filter matched %d docs (> %d); "
@@ -924,12 +924,15 @@ def _query_paperless_api(
     correspondent: Optional[str] = None,
     created_year: Optional[int] = None,
     document_type: Optional[str] = None,
+    max_ids: int = 0,
 ) -> Optional[list[str]]:
     """Query the Paperless REST API and return matching document IDs.
 
     Returns None on API failure (caller should fall back to ChromaDB
     metadata).  Returns an empty list when the query matched zero
-    documents.
+    documents.  When *max_ids* > 0, pagination is aborted early once
+    the threshold is exceeded (the returned list will contain more than
+    *max_ids* entries so the caller knows the cap was hit).
     """
     import requests
 
@@ -999,6 +1002,14 @@ def _query_paperless_api(
             data = resp.json()
             for doc in data.get("results", []):
                 all_ids.append(str(doc["id"]))
+            # Short-circuit when we already exceed the caller's cap —
+            # no need to paginate through thousands of IDs.
+            if max_ids and len(all_ids) > max_ids:
+                logger.info(
+                    "Paperless pre-filter exceeded %d IDs, stopping early",
+                    max_ids,
+                )
+                return all_ids
             url = data.get("next")
             page_params = None  # next URL already contains params
         logger.info(

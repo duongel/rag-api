@@ -29,6 +29,7 @@ class TestBuildChromadbFilters:
         result = _build_chromadb_filters(tags=["etron"])
         mock_query.assert_called_once_with(
             tags=["etron"], correspondent=None, created_year=None, document_type=None,
+            max_ids=200,
         )
         assert result == {"$or": [
             {"paperless_doc_id": "42"},
@@ -65,6 +66,7 @@ class TestBuildChromadbFilters:
         )
         mock_query.assert_called_once_with(
             tags=["etron"], correspondent="Audi", created_year=2025, document_type=None,
+            max_ids=200,
         )
         assert result == {"$or": [
             {"paperless_doc_id": "10"},
@@ -80,6 +82,7 @@ class TestBuildChromadbFilters:
         result = _build_chromadb_filters(document_type="Rechnung")
         mock_query.assert_called_once_with(
             tags=None, correspondent=None, created_year=None, document_type="Rechnung",
+            max_ids=200,
         )
         assert result == {"$or": [
             {"paperless_doc_id": "42"},
