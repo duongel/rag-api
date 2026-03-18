@@ -67,59 +67,49 @@ class Searcher:
 
         # Fetch more than top_k so that deduplication (which collapses
         # multiple chunks from the same document/section) doesn't
-        # under-fill the result set.  For date-sorting we need an even
-        # wider pool to capture truly newest documents.
-        #
-        # In the default (non-date) path we adaptively widen the fetch
-        # until either top_k unique results are collected or the corpus
-        # is exhausted, because a single long document can dominate the
-        # top-ranked chunks and collapse to one entry after dedup.
+        # under-fill the result set.  Both paths use the same adaptive
+        # widening loop: start with a generous initial window, dedup,
+        # and double the fetch size when unique results are still below
+        # top_k.  Date-sorting gets a wider initial window because we
+        # need to capture truly newest documents regardless of score.
         corpus_size = self.collection.count() or 1
+        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
 
-        if sort_by_date:
-            fetch_k = max(top_k * 20, 200)
-            fetch_k = min(fetch_k, corpus_size)
-
+        output: list[dict] = []
+        stalls = 0
+        prev_unique = 0
+        while True:
+            actual_k = min(fetch_k, corpus_size)
             query_kwargs: dict = {
                 "query_embeddings": [query_embedding],
-                "n_results": fetch_k,
+                "n_results": actual_k,
                 "include": ["documents", "metadatas", "distances"],
             }
             if where:
                 query_kwargs["where"] = where
 
             results = self.collection.query(**query_kwargs)
-            output = self._parse_query_results(results)
-            output = self._dedup_results(output)
-        else:
-            fetch_k = top_k * 3
-            output: list[dict] = []
-            prev_unique = 0
-            while True:
-                actual_k = min(fetch_k, corpus_size)
-                query_kwargs = {
-                    "query_embeddings": [query_embedding],
-                    "n_results": actual_k,
-                    "include": ["documents", "metadatas", "distances"],
-                }
-                if where:
-                    query_kwargs["where"] = where
+            raw = self._parse_query_results(results)
+            output = self._dedup_results(raw)
 
-                results = self.collection.query(**query_kwargs)
-                raw = self._parse_query_results(results)
-                output = self._dedup_results(raw)
-
-                if len(output) >= top_k or actual_k >= corpus_size:
+            if len(output) >= top_k or actual_k >= corpus_size:
+                break
+            # When a filter is active, ChromaDB may return fewer rows
+            # than requested because matching candidates are exhausted.
+            if len(raw) < actual_k:
+                break
+            # Allow one stall (unique count unchanged) before giving up
+            # — the next wider window may surface new documents beyond
+            # the chunk-dominated prefix.
+            if len(output) <= prev_unique:
+                stalls += 1
+                if stalls >= 2:
                     break
-                # When a filter is active, ChromaDB may return fewer
-                # rows than requested because matching candidates are
-                # exhausted.  Also stop when unique results stop growing
-                # between iterations to avoid redundant queries.
-                if len(raw) < actual_k or len(output) <= prev_unique:
-                    break
-                prev_unique = len(output)
-                # Double the window for the next attempt
-                fetch_k = min(fetch_k * 2, corpus_size)
+            else:
+                stalls = 0
+            prev_unique = len(output)
+            # Double the window for the next attempt
+            fetch_k = min(fetch_k * 2, corpus_size)
 
         if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
