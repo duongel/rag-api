@@ -283,13 +283,14 @@ class TestHybridSearch:
 
         mock_semantic.assert_called_once_with(
             "test query",
-            top_k=15,
+            top_k=50,
             expand_links=False,
             paperless_tags=None,
             paperless_correspondent=None,
             paperless_created_year=None,
             paperless_document_type=None,
             sort_by_date=True,
+            min_score=0.0,
         )
 
     def test_hybrid_merges_semantic_and_keyword(self):

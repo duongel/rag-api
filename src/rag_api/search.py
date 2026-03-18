@@ -182,15 +182,21 @@ class Searcher:
         but lack the actual content words the user asked for (e.g.
         "Kilometerstand" for a "Kosten" query).
         """
+        # When sorting by date we need wider candidate pools so that
+        # truly newest documents are captured even when they aren't
+        # among the top-k most relevant results.
+        candidate_k = top_k * 10 if sort_by_date else top_k * 3
+
         sem_results = self.semantic_search(
             query,
-            top_k=top_k * 3 if sort_by_date else top_k,
+            top_k=candidate_k if sort_by_date else top_k,
             expand_links=expand_links,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
             paperless_document_type=paperless_document_type,
             sort_by_date=sort_by_date,
+            min_score=min_score if sort_by_date else 0.0,
         )
 
         # Build a keyword query from content words only
@@ -201,7 +207,7 @@ class Searcher:
         kw_query = " ".join(content_words) if content_words else query
 
         kw_results = self.keyword_search(
-            kw_query, top_k=top_k * 3 if sort_by_date else top_k,
+            kw_query, top_k=candidate_k if sort_by_date else top_k,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
