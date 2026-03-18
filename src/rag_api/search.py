@@ -570,15 +570,19 @@ class Searcher:
                     seen.add(key)
 
             # Backfill created dates for filename matches from content metadata
-            created_by_fp: dict[str, str] = {}
+            created_by_key: dict[str, str] = {}
             for meta in (all_docs.get("metadatas") or []):
                 fp = meta.get("file_path", "")
+                source = meta.get("source", "obsidian")
                 created = meta.get("created", "")
-                if fp and created and fp not in created_by_fp:
-                    created_by_fp[fp] = created
+                key = f"{source}::{fp}"
+                if fp and created and key not in created_by_key:
+                    created_by_key[key] = created
             for r in results:
-                if not r.get("created") and r["file_path"] in created_by_fp:
-                    r["created"] = created_by_fp[r["file_path"]]
+                if not r.get("created"):
+                    key = f"{r.get('source', 'obsidian')}::{r['file_path']}"
+                    if key in created_by_key:
+                        r["created"] = created_by_key[key]
         except Exception:
             pass
 
@@ -757,6 +761,8 @@ _TAG_NAME_TO_ID: dict[str, int] = {}
 _DOCTYPE_NAME_TO_ID: dict[str, int] = {}
 # Cache: correspondent name (lowercase) → correspondent ID
 _CORR_NAME_TO_ID: dict[str, int] = {}
+# Track whether each cache was fully populated (all pages fetched)
+_LOOKUP_COMPLETE: dict[str, bool] = {"tags": False, "doctypes": False, "corrs": False}
 
 
 def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
@@ -769,14 +775,19 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         _TAG_NAME_TO_ID.clear()
         _DOCTYPE_NAME_TO_ID.clear()
         _CORR_NAME_TO_ID.clear()
+        _LOOKUP_COMPLETE["tags"] = False
+        _LOOKUP_COMPLETE["doctypes"] = False
+        _LOOKUP_COMPLETE["corrs"] = False
 
     if not _TAG_NAME_TO_ID:
         try:
             url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
             params: Optional[dict] = {"page_size": 500}
+            complete = True
             while url:
                 resp = requests.get(url, params=params, headers=headers, timeout=10)
                 if not resp.ok:
+                    complete = False
                     break
                 data = resp.json()
                 for t in data.get("results", []):
@@ -785,16 +796,19 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
                         _TAG_NAME_TO_ID[name.lower()] = t["id"]
                 url = data.get("next")
                 params = None
+            _LOOKUP_COMPLETE["tags"] = complete
         except Exception:
-            pass
+            _LOOKUP_COMPLETE["tags"] = False
 
     if not _DOCTYPE_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/document_types/"
             params = {"page_size": 500}
+            complete = True
             while url:
                 resp = requests.get(url, params=params, headers=headers, timeout=10)
                 if not resp.ok:
+                    complete = False
                     break
                 data = resp.json()
                 for dt in data.get("results", []):
@@ -803,16 +817,19 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
                         _DOCTYPE_NAME_TO_ID[name.lower()] = dt["id"]
                 url = data.get("next")
                 params = None
+            _LOOKUP_COMPLETE["doctypes"] = complete
         except Exception:
-            pass
+            _LOOKUP_COMPLETE["doctypes"] = False
 
     if not _CORR_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/correspondents/"
             params = {"page_size": 500}
+            complete = True
             while url:
                 resp = requests.get(url, params=params, headers=headers, timeout=10)
                 if not resp.ok:
+                    complete = False
                     break
                 data = resp.json()
                 for c in data.get("results", []):
@@ -821,8 +838,9 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
                         _CORR_NAME_TO_ID[name.lower()] = c["id"]
                 url = data.get("next")
                 params = None
+            _LOOKUP_COMPLETE["corrs"] = complete
         except Exception:
-            pass
+            _LOOKUP_COMPLETE["corrs"] = False
 
 
 def _query_paperless_api(
@@ -853,8 +871,8 @@ def _query_paperless_api(
                 _ensure_paperless_lookups(force_refresh=True)
                 tid = _TAG_NAME_TO_ID.get(tag_name.lower())
                 if tid is None:
-                    if not _TAG_NAME_TO_ID:
-                        logger.warning("Paperless API unreachable; falling back to metadata filters")
+                    if not _LOOKUP_COMPLETE["tags"]:
+                        logger.warning("Paperless tag lookup incomplete; falling back to metadata filters")
                         return None
                     logger.warning("Paperless tag '%s' not found", tag_name)
                     return []  # unknown tag → 0 matches
@@ -868,8 +886,8 @@ def _query_paperless_api(
             _ensure_paperless_lookups(force_refresh=True)
             dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
             if dtid is None:
-                if not _DOCTYPE_NAME_TO_ID:
-                    logger.warning("Paperless API unreachable; falling back to metadata filters")
+                if not _LOOKUP_COMPLETE["doctypes"]:
+                    logger.warning("Paperless doctype lookup incomplete; falling back to metadata filters")
                     return None
                 logger.warning("Paperless document type '%s' not found", document_type)
                 return []
@@ -882,8 +900,8 @@ def _query_paperless_api(
             _ensure_paperless_lookups(force_refresh=True)
             cid = _CORR_NAME_TO_ID.get(correspondent.lower())
             if cid is None:
-                if not _CORR_NAME_TO_ID:
-                    logger.warning("Paperless API unreachable; falling back to metadata filters")
+                if not _LOOKUP_COMPLETE["corrs"]:
+                    logger.warning("Paperless correspondent lookup incomplete; falling back to metadata filters")
                     return None
                 logger.warning("Paperless correspondent '%s' not found", correspondent)
                 return []

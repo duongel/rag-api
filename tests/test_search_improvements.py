@@ -538,22 +538,29 @@ class TestMinScoreDateSort:
 class TestPaperlessLookupFallback:
     """When Paperless API is unreachable, filters should fall back to metadata."""
 
-    def test_empty_tag_cache_returns_none(self):
-        """If tag cache is empty after refresh (API down), return None for fallback."""
+    def test_incomplete_tag_cache_returns_none(self):
+        """If tag lookup didn't complete (partial fetch), return None for fallback."""
         from rag_api.search import (
-            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
+            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID,
+            _CORR_NAME_TO_ID, _LOOKUP_COMPLETE,
         )
 
-        # Save and restore global caches to avoid polluting other tests
         saved = (dict(_TAG_NAME_TO_ID), dict(_DOCTYPE_NAME_TO_ID), dict(_CORR_NAME_TO_ID))
+        saved_complete = dict(_LOOKUP_COMPLETE)
         try:
+            # Simulate partial cache: some tags loaded but lookup incomplete
             _TAG_NAME_TO_ID.clear()
+            _TAG_NAME_TO_ID["page1tag"] = 1
             _DOCTYPE_NAME_TO_ID.clear()
             _CORR_NAME_TO_ID.clear()
+            _LOOKUP_COMPLETE["tags"] = False
+            _LOOKUP_COMPLETE["doctypes"] = False
+            _LOOKUP_COMPLETE["corrs"] = False
 
             with patch("rag_api.search._ensure_paperless_lookups"):
-                result = _query_paperless_api(tags=["Rechnung"])
+                result = _query_paperless_api(tags=["page2tag"])
 
+            # Incomplete cache → should return None (fallback), not [] (no match)
             assert result is None
         finally:
             _TAG_NAME_TO_ID.clear()
@@ -562,19 +569,25 @@ class TestPaperlessLookupFallback:
             _DOCTYPE_NAME_TO_ID.update(saved[1])
             _CORR_NAME_TO_ID.clear()
             _CORR_NAME_TO_ID.update(saved[2])
+            _LOOKUP_COMPLETE.update(saved_complete)
 
-    def test_nonempty_cache_unknown_tag_returns_empty(self):
-        """If cache is populated but tag doesn't exist, return [] (genuine no match)."""
+    def test_complete_cache_unknown_tag_returns_empty(self):
+        """If cache is fully populated but tag doesn't exist, return [] (genuine no match)."""
         from rag_api.search import (
-            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
+            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID,
+            _CORR_NAME_TO_ID, _LOOKUP_COMPLETE,
         )
 
         saved = (dict(_TAG_NAME_TO_ID), dict(_DOCTYPE_NAME_TO_ID), dict(_CORR_NAME_TO_ID))
+        saved_complete = dict(_LOOKUP_COMPLETE)
         try:
             _TAG_NAME_TO_ID.clear()
             _TAG_NAME_TO_ID["vorhanden"] = 42
             _DOCTYPE_NAME_TO_ID.clear()
             _CORR_NAME_TO_ID.clear()
+            _LOOKUP_COMPLETE["tags"] = True
+            _LOOKUP_COMPLETE["doctypes"] = True
+            _LOOKUP_COMPLETE["corrs"] = True
 
             with patch("rag_api.search._ensure_paperless_lookups"):
                 result = _query_paperless_api(tags=["Unbekannt"])
@@ -587,3 +600,4 @@ class TestPaperlessLookupFallback:
             _DOCTYPE_NAME_TO_ID.update(saved[1])
             _CORR_NAME_TO_ID.clear()
             _CORR_NAME_TO_ID.update(saved[2])
+            _LOOKUP_COMPLETE.update(saved_complete)
