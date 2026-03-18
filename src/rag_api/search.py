@@ -106,6 +106,20 @@ class Searcher:
     # Hybrid search (semantic + keyword)
     # ------------------------------------------------------------------
 
+    # German stop words filtered out when building keyword queries from
+    # natural-language input in hybrid search.
+    _STOP_WORDS: set = {
+        "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer",
+        "einem", "einen", "und", "oder", "aber", "als", "auch", "auf",
+        "aus", "bei", "bis", "da", "dass", "denn", "doch", "du", "er",
+        "es", "für", "hat", "ich", "ihr", "im", "in", "ist", "ja",
+        "kann", "man", "mit", "nach", "nicht", "noch", "nun", "nur",
+        "ob", "schon", "sich", "sie", "sind", "so", "über", "um",
+        "von", "vor", "was", "wenn", "wer", "wie", "wir", "wird",
+        "zu", "zum", "zur", "alle", "wann", "war", "were", "vom",
+        "suche", "summiere", "zeige", "finde", "liste",
+    }
+
     def hybrid_search(
         self, query: str, top_k: int = 5,
         paperless_tags: Optional[list[str]] = None,
@@ -116,10 +130,14 @@ class Searcher:
     ) -> list[dict]:
         """Run semantic **and** keyword search, merge and deduplicate.
 
-        This handles queries that mix conceptual terms with exact
-        identifiers (e.g. "Kaufvertrag Grundstück Montabaur").
-        Keyword hits that don't appear in the semantic results are
-        appended; duplicates are resolved by keeping the higher score.
+        The keyword search uses a cleaned version of the query with stop
+        words removed so that multi-word AND matching works on the
+        content words (e.g. "summiere alle kosten für den vw golf"
+        becomes keyword query "kosten vw golf").
+
+        When a document appears in *both* result sets it receives a
+        bonus (+0.05) because cross-method agreement is a strong
+        relevance signal.
         """
         sem_results = self.semantic_search(
             query, top_k=top_k,
@@ -127,8 +145,17 @@ class Searcher:
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
         )
+
+        # Build a keyword query from content words only
+        kw_query = " ".join(
+            w for w in query.lower().split()
+            if w not in self._STOP_WORDS and len(w) > 1
+        )
+        if not kw_query:
+            kw_query = query
+
         kw_results = self.keyword_search(
-            query, top_k=top_k,
+            kw_query, top_k=top_k,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
@@ -136,14 +163,25 @@ class Searcher:
 
         # Merge: use (source, file_path, section) as dedup key
         seen: dict[str, dict] = {}
+        sem_keys: set[str] = set()
+        kw_keys: set[str] = set()
+
         for r in sem_results:
             key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
             seen[key] = r
+            sem_keys.add(key)
 
         for r in kw_results:
             key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
+            kw_keys.add(key)
             if key not in seen or r["score"] > seen[key]["score"]:
                 seen[key] = r
+
+        # Cross-method bonus: docs found by BOTH methods are more relevant
+        _CROSS_BONUS = 0.05
+        for key in sem_keys & kw_keys:
+            seen[key] = dict(seen[key])
+            seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
 
         merged = list(seen.values())
 
