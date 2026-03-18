@@ -405,3 +405,167 @@ class TestHybridSearch:
         results = searcher.keyword_search("invoice", top_k=5)
 
         assert results[0]["created"] == "2025-11-01"
+
+    def test_filename_match_gets_created_from_content_metadata(self):
+        """Filename matches should backfill `created` from content metadata."""
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer._file_sources = {"paperless::invoice.pdf": "paperless"}
+        mock_indexer._file_path_from_key = lambda k: k.split("::", 1)[1]
+
+        mock_collection = MagicMock()
+        mock_collection.get.return_value = {
+            "documents": ["invoice total 500 EUR"],
+            "metadatas": [{
+                "file_path": "invoice.pdf",
+                "section": "",
+                "source": "paperless",
+                "created": "2025-06-15",
+            }],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        results = searcher.keyword_search("invoice", top_k=5)
+
+        # Filename match should have created backfilled
+        filename_results = [r for r in results if r["match_type"] == "filename"]
+        assert len(filename_results) == 1
+        assert filename_results[0].get("created") == "2025-06-15"
+
+
+class TestMultiWordDocumentScope:
+    """Multi-word AND should match across chunks of the same document."""
+
+    def _make_searcher(self, docs, metadatas):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer._file_sources = {}
+        mock_indexer._file_path_from_key = lambda k: k.split("::", 1)[1]
+
+        mock_collection = MagicMock()
+        mock_collection.get.return_value = {
+            "documents": docs,
+            "metadatas": metadatas,
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+        return searcher
+
+    def test_terms_split_across_chunks_still_match(self):
+        """If term A is in chunk 1 and term B is in chunk 2 of the same doc, it should match."""
+        docs = [
+            "Der Kaufvertrag wurde am 01.01.2020 geschlossen",
+            "Das Grundstück befindet sich in Montabaur",
+        ]
+        metas = [
+            {"file_path": "vertrag.pdf", "section": "1", "source": "paperless"},
+            {"file_path": "vertrag.pdf", "section": "2", "source": "paperless"},
+        ]
+        searcher = self._make_searcher(docs, metas)
+        results = searcher.keyword_search("kaufvertrag grundstück", top_k=5)
+
+        # Should find vertrag.pdf even though terms are in different chunks
+        fps = [r["file_path"] for r in results]
+        assert "vertrag.pdf" in fps
+
+    def test_unrelated_doc_not_matched(self):
+        """A document that only has one of two terms across all chunks should not match."""
+        docs = [
+            "Kaufvertrag Audi e-tron",
+            "Wartung und Inspektion",
+        ]
+        metas = [
+            {"file_path": "auto.pdf", "section": "1", "source": "paperless"},
+            {"file_path": "auto.pdf", "section": "2", "source": "paperless"},
+        ]
+        searcher = self._make_searcher(docs, metas)
+        results = searcher.keyword_search("kaufvertrag grundstück", top_k=5)
+
+        assert len(results) == 0
+
+
+class TestMinScoreDateSort:
+    """min_score should be applied before truncating date-sorted semantic results."""
+
+    def test_min_score_filters_before_top_k_truncation(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = None
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 5
+
+        # 5 results: 2 high-score, 3 low-score but newer
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2", "id3", "id4", "id5"]],
+            "documents": [["old good", "old good 2", "new bad", "new bad 2", "new bad 3"]],
+            "metadatas": [[
+                {"file_path": "a.pdf", "section": "1", "source": "paperless", "created": "2024-01-01"},
+                {"file_path": "b.pdf", "section": "1", "source": "paperless", "created": "2024-02-01"},
+                {"file_path": "c.pdf", "section": "1", "source": "paperless", "created": "2025-11-01"},
+                {"file_path": "d.pdf", "section": "1", "source": "paperless", "created": "2025-12-01"},
+                {"file_path": "e.pdf", "section": "1", "source": "paperless", "created": "2025-12-15"},
+            ]],
+            "distances": [[0.1, 0.15, 0.7, 0.75, 0.8]],  # c,d,e have low scores (0.3, 0.25, 0.2)
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.embed_query", return_value=[0.1] * 768):
+            results = searcher.semantic_search(
+                "test", top_k=3, sort_by_date=True,
+                min_score=0.5, expand_links=False,
+            )
+
+        # Only a.pdf (0.9) and b.pdf (0.85) pass min_score; c/d/e are below 0.5
+        assert len(results) == 2
+        fps = [r["file_path"] for r in results]
+        assert "a.pdf" in fps
+        assert "b.pdf" in fps
+
+
+class TestPaperlessLookupFallback:
+    """When Paperless API is unreachable, filters should fall back to metadata."""
+
+    def test_empty_tag_cache_returns_none(self):
+        """If tag cache is empty after refresh (API down), return None for fallback."""
+        from rag_api.search import (
+            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
+        )
+
+        # Simulate empty caches (API failure)
+        _TAG_NAME_TO_ID.clear()
+        _DOCTYPE_NAME_TO_ID.clear()
+        _CORR_NAME_TO_ID.clear()
+
+        with patch("rag_api.search._ensure_paperless_lookups"):
+            result = _query_paperless_api(tags=["Rechnung"])
+
+        # Should return None (API failure) not [] (no matches)
+        assert result is None
+
+    def test_nonempty_cache_unknown_tag_returns_empty(self):
+        """If cache is populated but tag doesn't exist, return [] (genuine no match)."""
+        from rag_api.search import (
+            _query_paperless_api, _TAG_NAME_TO_ID, _DOCTYPE_NAME_TO_ID, _CORR_NAME_TO_ID,
+        )
+
+        _TAG_NAME_TO_ID.clear()
+        _TAG_NAME_TO_ID["vorhanden"] = 42
+        _DOCTYPE_NAME_TO_ID.clear()
+        _CORR_NAME_TO_ID.clear()
+
+        with patch("rag_api.search._ensure_paperless_lookups"):
+            result = _query_paperless_api(tags=["Unbekannt"])
+
+        assert result == []

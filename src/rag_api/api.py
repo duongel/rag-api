@@ -212,6 +212,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_created_year=req.paperless_created_year,
         paperless_document_type=req.paperless_document_type,
         sort_by_date=req.sort_by_date,
+        min_score=req.min_score,
     )
     if req.min_score > 0:
         results = [r for r in results if r["score"] >= req.min_score]

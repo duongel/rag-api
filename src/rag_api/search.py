@@ -45,6 +45,7 @@ class Searcher:
         paperless_created_year: Optional[int] = None,
         paperless_document_type: Optional[str] = None,
         sort_by_date: bool = False,
+        min_score: float = 0.0,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
         append linked notes up to 2 degrees of separation.
@@ -103,6 +104,8 @@ class Searcher:
             output = self._expand_with_links(output, query_embedding, top_k)
 
         if sort_by_date:
+            if min_score > 0:
+                output = [r for r in output if r["score"] >= min_score]
             output.sort(
                 key=lambda r: r.get("created", ""),
                 reverse=True,
@@ -498,35 +501,78 @@ class Searcher:
             if where is not None:
                 get_kwargs["where"] = where
             all_docs = self.collection.get(**get_kwargs)
-            for i, doc in enumerate(all_docs["documents"] or []):
-                doc_lower = doc.lower()
-                if multi_word:
-                    if not all(t in doc_lower for t in terms):
+
+            if multi_word:
+                # Evaluate AND across all chunks of the same document so
+                # that terms split across different chunks still match.
+                from collections import defaultdict
+                file_chunks: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+                for i, doc in enumerate(all_docs["documents"] or []):
+                    meta = all_docs["metadatas"][i]
+                    file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
+                    file_chunks[file_key].append((doc, meta))
+
+                for file_key, chunks in file_chunks.items():
+                    combined_lower = " ".join(doc.lower() for doc, _ in chunks)
+                    if not all(t in combined_lower for t in terms):
                         continue
-                else:
+                    for doc, meta in chunks:
+                        doc_lower = doc.lower()
+                        if not any(t in doc_lower for t in terms):
+                            continue
+                        key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
+                        if key in seen:
+                            continue
+                        score = self._keyword_score_multi(doc, terms, term_patterns)
+                        entry: dict = {
+                            "file_path": meta["file_path"],
+                            "section": meta.get("section", ""),
+                            "content": doc[:1000],
+                            "score": score,
+                            "match_type": "content",
+                            "source": meta.get("source", "obsidian"),
+                        }
+                        if meta.get("paperless_doc_id"):
+                            entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                        if meta.get("created"):
+                            entry["created"] = meta["created"]
+                        results.append(entry)
+                        seen.add(key)
+            else:
+                for i, doc in enumerate(all_docs["documents"] or []):
+                    doc_lower = doc.lower()
                     if query_lower not in doc_lower:
                         continue
-                meta = all_docs["metadatas"][i]
-                key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
-                if key in seen:
-                    continue
-                score = self._keyword_score_multi(
-                    doc, terms, term_patterns,
-                ) if multi_word else self._keyword_score(doc, query_lower, word_pattern)
-                entry: dict = {
-                    "file_path": meta["file_path"],
-                    "section": meta.get("section", ""),
-                    "content": doc[:1000],
-                    "score": score,
-                    "match_type": "content",
-                    "source": meta.get("source", "obsidian"),
-                }
-                if meta.get("paperless_doc_id"):
-                    entry["paperless_doc_id"] = meta["paperless_doc_id"]
-                if meta.get("created"):
-                    entry["created"] = meta["created"]
-                results.append(entry)
-                seen.add(key)
+                    meta = all_docs["metadatas"][i]
+                    key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
+                    if key in seen:
+                        continue
+                    score = self._keyword_score(doc, query_lower, word_pattern)
+                    entry = {
+                        "file_path": meta["file_path"],
+                        "section": meta.get("section", ""),
+                        "content": doc[:1000],
+                        "score": score,
+                        "match_type": "content",
+                        "source": meta.get("source", "obsidian"),
+                    }
+                    if meta.get("paperless_doc_id"):
+                        entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                    if meta.get("created"):
+                        entry["created"] = meta["created"]
+                    results.append(entry)
+                    seen.add(key)
+
+            # Backfill created dates for filename matches from content metadata
+            created_by_fp: dict[str, str] = {}
+            for meta in (all_docs.get("metadatas") or []):
+                fp = meta.get("file_path", "")
+                created = meta.get("created", "")
+                if fp and created and fp not in created_by_fp:
+                    created_by_fp[fp] = created
+            for r in results:
+                if not r.get("created") and r["file_path"] in created_by_fp:
+                    r["created"] = created_by_fp[r["file_path"]]
         except Exception:
             pass
 
@@ -801,6 +847,9 @@ def _query_paperless_api(
                 _ensure_paperless_lookups(force_refresh=True)
                 tid = _TAG_NAME_TO_ID.get(tag_name.lower())
                 if tid is None:
+                    if not _TAG_NAME_TO_ID:
+                        logger.warning("Paperless API unreachable; falling back to metadata filters")
+                        return None
                     logger.warning("Paperless tag '%s' not found", tag_name)
                     return []  # unknown tag → 0 matches
             tag_ids.append(str(tid))
@@ -813,6 +862,9 @@ def _query_paperless_api(
             _ensure_paperless_lookups(force_refresh=True)
             dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
             if dtid is None:
+                if not _DOCTYPE_NAME_TO_ID:
+                    logger.warning("Paperless API unreachable; falling back to metadata filters")
+                    return None
                 logger.warning("Paperless document type '%s' not found", document_type)
                 return []
         params["document_type__id__in"] = str(dtid)
@@ -824,6 +876,9 @@ def _query_paperless_api(
             _ensure_paperless_lookups(force_refresh=True)
             cid = _CORR_NAME_TO_ID.get(correspondent.lower())
             if cid is None:
+                if not _CORR_NAME_TO_ID:
+                    logger.warning("Paperless API unreachable; falling back to metadata filters")
+                    return None
                 logger.warning("Paperless correspondent '%s' not found", correspondent)
                 return []
         params["correspondent__id"] = str(cid)

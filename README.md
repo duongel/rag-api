@@ -96,23 +96,36 @@ Typical endpoint choices:
 
 ```mermaid
 graph LR
+    AGENT["LLM Agent<br><sub>uses SKILL.md / tools</sub>"]:::ext
+
     subgraph Docker Network
-        RAG["rag-api<br><sub>FastAPI · ChromaDB</sub>"]
+        API["rag-api<br><sub>FastAPI · ChromaDB</sub>"]
+        SEARCH["/search · /keyword-search · /hybrid-search"]
+        FILTER["Paperless pre-filter<br><sub>tags / correspondent / year / document type</sub>"]
+        CHROMA["ChromaDB index<br><sub>semantic + keyword retrieval</sub>"]
         OLL["ollama<br><sub>nomic-embed-text</sub>"]
     end
 
     VAULT["Obsidian Vault"]:::ext
     PAPER["Paperless-NGX"]:::ext
 
-    RAG -->|embeddings| OLL
-    VAULT -->|read-only mount| RAG
-    PAPER <-->|REST API · webhook| RAG
+    AGENT -->|HTTP API| API
+    API --> SEARCH
+    SEARCH --> FILTER
+    FILTER <-->|REST API| PAPER
+    SEARCH --> CHROMA
+    CHROMA -->|embeddings| OLL
+    VAULT -->|read-only mount| CHROMA
+    PAPER -->|content + metadata| CHROMA
+    PAPER -->|webhook| API
 
     classDef ext fill:#f0f0f0,stroke:#999,stroke-width:1px,color:#333
 ```
 
 - Obsidian files are watched via inotify and indexed on change
 - Paperless documents are fetched via REST API; a webhook is auto-registered for real-time updates
+- Paperless queries can be pre-filtered by tag, correspondent, year, and document type before semantic or hybrid ranking
+- `/hybrid-search` combines semantic and keyword retrieval, while `sort_by_date` supports newest-first document queries
 - All data-bearing endpoints require a bearer token by default
 
 ## Access Modes
