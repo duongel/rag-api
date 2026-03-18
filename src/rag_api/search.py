@@ -94,6 +94,7 @@ class Searcher:
         else:
             fetch_k = top_k * 3
             output: list[dict] = []
+            prev_unique = 0
             while True:
                 actual_k = min(fetch_k, corpus_size)
                 query_kwargs = {
@@ -105,10 +106,18 @@ class Searcher:
                     query_kwargs["where"] = where
 
                 results = self.collection.query(**query_kwargs)
-                output = self._dedup_results(self._parse_query_results(results))
+                raw = self._parse_query_results(results)
+                output = self._dedup_results(raw)
 
                 if len(output) >= top_k or actual_k >= corpus_size:
                     break
+                # When a filter is active, ChromaDB may return fewer
+                # rows than requested because matching candidates are
+                # exhausted.  Also stop when unique results stop growing
+                # between iterations to avoid redundant queries.
+                if len(raw) < actual_k or len(output) <= prev_unique:
+                    break
+                prev_unique = len(output)
                 # Double the window for the next attempt
                 fetch_k = min(fetch_k * 2, corpus_size)
 
