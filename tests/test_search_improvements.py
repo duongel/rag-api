@@ -267,6 +267,31 @@ class TestDateSorting:
 
 
 class TestHybridSearch:
+    def test_hybrid_forwards_sort_by_date_and_expand_links(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        with patch.object(searcher, "semantic_search", return_value=[]) as mock_semantic, \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            searcher.hybrid_search(
+                "test query",
+                top_k=5,
+                expand_links=False,
+                sort_by_date=True,
+            )
+
+        mock_semantic.assert_called_once_with(
+            "test query",
+            top_k=15,
+            expand_links=False,
+            paperless_tags=None,
+            paperless_correspondent=None,
+            paperless_created_year=None,
+            paperless_document_type=None,
+            sort_by_date=True,
+        )
+
     def test_hybrid_merges_semantic_and_keyword(self):
         from rag_api.search import Searcher
 

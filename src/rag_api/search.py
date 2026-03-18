@@ -158,6 +158,7 @@ class Searcher:
 
     def hybrid_search(
         self, query: str, top_k: int = 5,
+        expand_links: bool = True,
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
@@ -179,11 +180,14 @@ class Searcher:
         "Kilometerstand" for a "Kosten" query).
         """
         sem_results = self.semantic_search(
-            query, top_k=top_k * 3 if sort_by_date else top_k,
+            query,
+            top_k=top_k * 3 if sort_by_date else top_k,
+            expand_links=expand_links,
             paperless_tags=paperless_tags,
             paperless_correspondent=paperless_correspondent,
             paperless_created_year=paperless_created_year,
             paperless_document_type=paperless_document_type,
+            sort_by_date=sort_by_date,
         )
 
         # Build a keyword query from content words only

@@ -262,6 +262,7 @@ def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
     """Combined semantic + keyword search with deduplication."""
     results = searcher.hybrid_search(
         req.query, req.top_k,
+        expand_links=req.expand_links,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
