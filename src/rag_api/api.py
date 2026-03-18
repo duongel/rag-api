@@ -79,6 +79,7 @@ class SearchRequest(BaseModel):
     paperless_tags: Optional[list[str]] = None
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
+    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
 
 
 class SearchResult(BaseModel):
@@ -209,6 +210,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
         sort_by_date=req.sort_by_date,
     )
     if req.min_score > 0:
@@ -238,6 +240,7 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
     )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
@@ -262,6 +265,7 @@ def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
         sort_by_date=req.sort_by_date,
         min_score=req.min_score,
     )
