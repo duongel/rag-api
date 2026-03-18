@@ -234,12 +234,20 @@ class Indexer:
         with self._lock:
             prev_path = self._paperless_doc_paths.get(str(doc_id))
             path_changed = prev_path is not None and prev_path != file_path
+            previously_indexed = (
+                prev_path is not None
+                or doc_key in self._api_content_hashes
+                or doc_key in self._file_hashes
+            )
             if not path_changed and self._api_content_hashes.get(doc_key) == api_doc_hash:
                 return False  # unchanged
 
-        # Remove all existing entries for this doc ID (handles renamed archive files)
-        self._remove_all_paths_for_paperless_doc(doc_id)
-        self.remove_file(file_path, source="paperless")
+        # Only remove old entries when the document was previously indexed;
+        # on a fresh index these calls are pure overhead (ChromaDB queries
+        # under _db_lock that always return empty results).
+        if previously_indexed:
+            self._remove_all_paths_for_paperless_doc(doc_id)
+            self.remove_file(file_path, source="paperless")
 
         chunks = parse_plaintext(file_path, content)
         if not chunks:
