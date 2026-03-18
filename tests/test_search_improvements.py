@@ -142,6 +142,35 @@ class TestMultiWordKeywordSearch:
 
 
 class TestDateSorting:
+    def test_semantic_search_dedups_multiple_chunks_from_same_doc(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = None
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 3
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2", "id3"]],
+            "documents": [["best chunk", "weaker chunk", "other doc"]],
+            "metadatas": [[
+                {"file_path": "same.pdf", "section": "42", "source": "paperless"},
+                {"file_path": "same.pdf", "section": "42", "source": "paperless"},
+                {"file_path": "other.pdf", "section": "43", "source": "paperless"},
+            ]],
+            "distances": [[0.1, 0.2, 0.3]],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.embed_query", return_value=[0.1] * 768):
+            results = searcher.semantic_search("test", top_k=5, expand_links=False)
+
+        assert [r["file_path"] for r in results] == ["same.pdf", "other.pdf"]
+        assert results[0]["content"] == "best chunk"
+
     def test_sort_by_date_fetches_wider_candidate_pool_without_filter(self):
         from rag_api.search import Searcher
 

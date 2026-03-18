@@ -97,6 +97,8 @@ class Searcher:
                 entry["created"] = meta["created"]
             output.append(entry)
 
+        output = self._dedup_results(output)
+
         if expand_links and not where:
             output = self._expand_with_links(output, query_embedding, top_k)
 
@@ -107,6 +109,20 @@ class Searcher:
             )
 
         return output[:top_k]
+
+    @staticmethod
+    def _dedup_results(results: list[dict]) -> list[dict]:
+        """Keep only the best-scoring entry per source/file/section tuple."""
+        deduped: dict[str, dict] = {}
+        for result in results:
+            key = (
+                f"{result.get('source', 'obsidian')}::"
+                f"{result['file_path']}#{result.get('section', '')}"
+            )
+            current = deduped.get(key)
+            if current is None or result["score"] > current["score"]:
+                deduped[key] = result
+        return list(deduped.values())
 
     # ------------------------------------------------------------------
     # Hybrid search (semantic + keyword)
