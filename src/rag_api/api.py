@@ -47,7 +47,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def require_auth(
-    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
 ) -> None:
     """Protect data-bearing endpoints when running outside a trusted local setup."""
     if not AUTH_REQUIRED:
@@ -308,13 +308,45 @@ def post_note(req: NoteRequest, _: None = Security(require_auth)):
 def reindex(_: None = Security(require_auth)):
     """Re-scans the vault and Paperless archive (if configured) and updates changed files."""
     global indexing_status
-    indexing_status = {"indexing": True, "indexed_files": 0, "total_files": 0}
+    indexing_status = {
+        "indexing": True,
+        "indexed_files": 0,
+        "total_files": 0,
+        "obsidian_indexed": 0,
+        "obsidian_total": 0,
+        "paperless_indexed": 0,
+        "paperless_total": 0,
+    }
     count = 0
     if DATA_SOURCES in ("obsidian", "all"):
+        indexing_status["obsidian_total"] = sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        )
         count += indexer.full_reindex()
+        indexing_status["obsidian_indexed"] = indexing_status["obsidian_total"]
     if DATA_SOURCES in ("paperless", "all"):
+        indexing_status["paperless_total"] = sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        )
         count += indexer.full_reindex(source="paperless")
-    indexing_status = {"indexing": False, "indexed_files": len(indexer._file_hashes), "total_files": len(indexer._file_hashes)}
+        indexing_status["paperless_indexed"] = indexing_status["paperless_total"]
+    indexing_status = {
+        "indexing": False,
+        "indexed_files": len(indexer._file_hashes),
+        "total_files": len(indexer._file_hashes),
+        "obsidian_indexed": sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        ),
+        "obsidian_total": sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        ),
+        "paperless_indexed": sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        ),
+        "paperless_total": sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        ),
+    }
     return ReindexResponse(updated_files=count, message=f"Reindexed {count} files")
 
 

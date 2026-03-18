@@ -29,6 +29,11 @@ _PAPERLESS_CACHE_TTL_SECONDS = 300.0
 
 class Indexer:
     def __init__(self):
+        # Keep Paperless lookup caches instance-local in practice so stale names
+        # from previous runs/tests do not leak into fresh indexing sessions.
+        _PAPERLESS_TAG_NAME_CACHE.clear()
+        _PAPERLESS_CORRESPONDENT_CACHE.clear()
+        _PAPERLESS_DOCTYPE_CACHE.clear()
         self.client = chromadb.PersistentClient(path=CHROMA_PATH)
         self.collection = self.client.get_or_create_collection(
             name="rag_documents",

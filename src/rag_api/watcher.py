@@ -10,6 +10,7 @@ import logging
 import platform
 import threading
 from pathlib import Path
+from typing import Optional
 
 from watchdog.events import FileSystemEventHandler
 
@@ -114,7 +115,7 @@ class _DebouncedHandler(FileSystemEventHandler):
         if new:
             self._schedule(new)
 
-    def _rel_path(self, src_path: str) -> str | None:
+    def _rel_path(self, src_path: str) -> Optional[str]:
         raise NotImplementedError
 
 
@@ -138,7 +139,7 @@ class _ObsidianHandler(_DebouncedHandler):
             return True
         return False
 
-    def _rel_path(self, src_path: str) -> str | None:
+    def _rel_path(self, src_path: str) -> Optional[str]:
         try:
             return str(Path(src_path).relative_to(VAULT_PATH))
         except ValueError:
