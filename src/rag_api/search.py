@@ -138,6 +138,23 @@ class Searcher:
             return f"{source}::{file_path}"
         return f"{source}::{file_path}#{result.get('section', '')}"
 
+    @staticmethod
+    def _make_keyword_entry(meta: dict, doc: str, score: float) -> dict:
+        """Build a keyword-search result dict from chunk metadata."""
+        entry: dict = {
+            "file_path": meta["file_path"],
+            "section": meta.get("section", ""),
+            "content": doc[:1000],
+            "score": score,
+            "match_type": "content",
+            "source": meta.get("source", "obsidian"),
+        }
+        if meta.get("paperless_doc_id"):
+            entry["paperless_doc_id"] = meta["paperless_doc_id"]
+        if meta.get("created"):
+            entry["created"] = meta["created"]
+        return entry
+
     # ------------------------------------------------------------------
     # Hybrid search (semantic + keyword)
     # ------------------------------------------------------------------
@@ -538,6 +555,9 @@ class Searcher:
                     file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
                     file_chunks[file_key].append((doc, meta))
 
+                # Track index into results list per dedup key so we can
+                # replace a weaker chunk with a higher-scoring one.
+                key_to_idx: dict[str, int] = {}
                 for file_key, chunks in file_chunks.items():
                     combined_lower = " ".join(doc.lower() for doc, _ in chunks)
                     if not all(t in combined_lower for t in terms):
@@ -547,45 +567,32 @@ class Searcher:
                         if not any(t in doc_lower for t in terms):
                             continue
                         key = self._result_key(meta, collapse_paperless_sections=True)
-                        if key in seen:
-                            continue
                         score = self._keyword_score_multi(doc, terms, term_patterns)
-                        entry: dict = {
-                            "file_path": meta["file_path"],
-                            "section": meta.get("section", ""),
-                            "content": doc[:1000],
-                            "score": score,
-                            "match_type": "content",
-                            "source": meta.get("source", "obsidian"),
-                        }
-                        if meta.get("paperless_doc_id"):
-                            entry["paperless_doc_id"] = meta["paperless_doc_id"]
-                        if meta.get("created"):
-                            entry["created"] = meta["created"]
+                        if key in seen:
+                            prev_idx = key_to_idx.get(key)
+                            if prev_idx is not None and score > results[prev_idx]["score"]:
+                                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                            continue
+                        entry = self._make_keyword_entry(meta, doc, score)
+                        key_to_idx[key] = len(results)
                         results.append(entry)
                         seen.add(key)
             else:
+                key_to_idx = {}
                 for i, doc in enumerate(all_docs["documents"] or []):
                     doc_lower = doc.lower()
                     if query_lower not in doc_lower:
                         continue
                     meta = all_docs["metadatas"][i]
                     key = self._result_key(meta, collapse_paperless_sections=True)
-                    if key in seen:
-                        continue
                     score = self._keyword_score(doc, query_lower, word_pattern)
-                    entry = {
-                        "file_path": meta["file_path"],
-                        "section": meta.get("section", ""),
-                        "content": doc[:1000],
-                        "score": score,
-                        "match_type": "content",
-                        "source": meta.get("source", "obsidian"),
-                    }
-                    if meta.get("paperless_doc_id"):
-                        entry["paperless_doc_id"] = meta["paperless_doc_id"]
-                    if meta.get("created"):
-                        entry["created"] = meta["created"]
+                    if key in seen:
+                        prev_idx = key_to_idx.get(key)
+                        if prev_idx is not None and score > results[prev_idx]["score"]:
+                            results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                        continue
+                    entry = self._make_keyword_entry(meta, doc, score)
+                    key_to_idx[key] = len(results)
                     results.append(entry)
                     seen.add(key)
 
