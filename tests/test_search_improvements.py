@@ -359,3 +359,49 @@ class TestHybridSearch:
 
         assert results[0]["file_path"] == "new.pdf"
         assert results[1]["file_path"] == "old.pdf"
+
+    def test_hybrid_sort_by_date_uses_created_from_keyword_hits(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = []
+        kw_results = [
+            {"file_path": "old.pdf", "section": "", "score": 0.95, "source": "paperless",
+             "match_type": "content", "created": "2024-01-01", "content": "invoice"},
+            {"file_path": "new.pdf", "section": "", "score": 0.80, "source": "paperless",
+             "match_type": "content", "created": "2025-11-01", "content": "invoice"},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=kw_results):
+            results = searcher.hybrid_search("invoice", top_k=5, sort_by_date=True)
+
+        assert results[0]["file_path"] == "new.pdf"
+        assert results[1]["file_path"] == "old.pdf"
+
+    def test_keyword_search_includes_created_metadata(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer._file_sources = {}
+        mock_indexer._file_path_from_key = lambda k: k.split("::", 1)[1]
+
+        mock_collection = MagicMock()
+        mock_collection.get.return_value = {
+            "documents": ["invoice content"],
+            "metadatas": [{
+                "file_path": "invoice.pdf",
+                "section": "",
+                "source": "paperless",
+                "created": "2025-11-01",
+            }],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        results = searcher.keyword_search("invoice", top_k=5)
+
+        assert results[0]["created"] == "2025-11-01"

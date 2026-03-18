@@ -523,6 +523,8 @@ class Searcher:
                 }
                 if meta.get("paperless_doc_id"):
                     entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                if meta.get("created"):
+                    entry["created"] = meta["created"]
                 results.append(entry)
                 seen.add(key)
         except Exception:
@@ -705,11 +707,16 @@ _DOCTYPE_NAME_TO_ID: dict[str, int] = {}
 _CORR_NAME_TO_ID: dict[str, int] = {}
 
 
-def _ensure_paperless_lookups() -> None:
+def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
     """Lazily fetch and cache Paperless tags / document types / correspondents."""
     import requests
 
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+    if force_refresh:
+        _TAG_NAME_TO_ID.clear()
+        _DOCTYPE_NAME_TO_ID.clear()
+        _CORR_NAME_TO_ID.clear()
 
     if not _TAG_NAME_TO_ID:
         try:
@@ -791,8 +798,11 @@ def _query_paperless_api(
         for tag_name in tags:
             tid = _TAG_NAME_TO_ID.get(tag_name.lower())
             if tid is None:
-                logger.warning("Paperless tag '%s' not found", tag_name)
-                return []  # unknown tag → 0 matches
+                _ensure_paperless_lookups(force_refresh=True)
+                tid = _TAG_NAME_TO_ID.get(tag_name.lower())
+                if tid is None:
+                    logger.warning("Paperless tag '%s' not found", tag_name)
+                    return []  # unknown tag → 0 matches
             tag_ids.append(str(tid))
         params["tags__id__all"] = ",".join(tag_ids)
 
@@ -800,16 +810,22 @@ def _query_paperless_api(
     if document_type:
         dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
         if dtid is None:
-            logger.warning("Paperless document type '%s' not found", document_type)
-            return []
+            _ensure_paperless_lookups(force_refresh=True)
+            dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
+            if dtid is None:
+                logger.warning("Paperless document type '%s' not found", document_type)
+                return []
         params["document_type__id__in"] = str(dtid)
 
     # Resolve correspondent name → ID
     if correspondent:
         cid = _CORR_NAME_TO_ID.get(correspondent.lower())
         if cid is None:
-            logger.warning("Paperless correspondent '%s' not found", correspondent)
-            return []
+            _ensure_paperless_lookups(force_refresh=True)
+            cid = _CORR_NAME_TO_ID.get(correspondent.lower())
+            if cid is None:
+                logger.warning("Paperless correspondent '%s' not found", correspondent)
+                return []
         params["correspondent__id"] = str(cid)
 
     # Date range filter

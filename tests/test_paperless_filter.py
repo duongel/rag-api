@@ -191,6 +191,63 @@ class TestPaperlessLookupPagination:
         assert _DOCTYPE_NAME_TO_ID["invoice"] == 1
         assert _DOCTYPE_NAME_TO_ID["contract"] == 2
 
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_query_refreshes_lookup_caches_before_returning_unknown(self):
+        from rag_api.search import (
+            _CORR_NAME_TO_ID,
+            _DOCTYPE_NAME_TO_ID,
+            _TAG_NAME_TO_ID,
+            _query_paperless_api,
+        )
+
+        _TAG_NAME_TO_ID.clear()
+        _DOCTYPE_NAME_TO_ID.clear()
+        _CORR_NAME_TO_ID.clear()
+
+        calls = {"tags": 0, "doctypes": 0, "corrs": 0}
+
+        def fake_get(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            if url == "https://example.com/api/tags/":
+                calls["tags"] += 1
+                if calls["tags"] == 1:
+                    resp.json.return_value = {"results": [{"id": 1, "name": "oldtag"}], "next": None}
+                else:
+                    resp.json.return_value = {"results": [{"id": 2, "name": "newtag"}], "next": None}
+            elif url == "https://example.com/api/document_types/":
+                calls["doctypes"] += 1
+                if calls["doctypes"] == 1:
+                    resp.json.return_value = {"results": [{"id": 10, "name": "oldtype"}], "next": None}
+                else:
+                    resp.json.return_value = {"results": [{"id": 11, "name": "newtype"}], "next": None}
+            elif url == "https://example.com/api/correspondents/":
+                calls["corrs"] += 1
+                if calls["corrs"] == 1:
+                    resp.json.return_value = {"results": [{"id": 20, "name": "oldcorr"}], "next": None}
+                else:
+                    resp.json.return_value = {"results": [{"id": 21, "name": "newcorr"}], "next": None}
+            elif url == "https://example.com/api/documents/":
+                resp.json.return_value = {"results": [{"id": 42}], "next": None}
+            else:
+                resp.ok = False
+                resp.json.return_value = {}
+            return resp
+
+        with patch("requests.get", side_effect=fake_get):
+            _query_paperless_api(tags=["oldtag"], correspondent="oldcorr", document_type="oldtype")
+            result = _query_paperless_api(
+                tags=["newtag"],
+                correspondent="newcorr",
+                document_type="newtype",
+            )
+
+        assert result == ["42"]
+        assert calls["tags"] >= 2
+        assert calls["doctypes"] >= 2
+        assert calls["corrs"] >= 2
+
 
 # ---------------------------------------------------------------------------
 # Semantic search with pre-filter
