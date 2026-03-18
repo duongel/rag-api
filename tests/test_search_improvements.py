@@ -124,7 +124,13 @@ class TestMultiWordKeywordSearch:
     def test_filename_and_content_match_do_not_duplicate_paperless_result(self):
         docs = ["invoice details and amount"]
         metas = [
-            {"file_path": "invoice.pdf", "section": "", "source": "paperless"},
+            {
+                "file_path": "invoice.pdf",
+                "section": "12",
+                "source": "paperless",
+                "paperless_doc_id": "42",
+                "source_url": "https://paperless.local/documents/42/",
+            },
         ]
         searcher = self._make_searcher(docs, metas)
         searcher.indexer._file_sources = {"paperless::invoice.pdf": "paperless"}
@@ -134,6 +140,7 @@ class TestMultiWordKeywordSearch:
         assert len(results) == 1
         assert results[0]["file_path"] == "invoice.pdf"
         assert results[0]["match_type"] == "filename"
+        assert results[0].get("paperless_doc_id") == "42"
 
 
 # ---------------------------------------------------------------------------

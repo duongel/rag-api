@@ -570,6 +570,15 @@ class Searcher:
                 get_kwargs["where"] = where
             all_docs = self.collection.get(**get_kwargs)
 
+            # Track index into results list per dedup key so we can
+            # replace a weaker chunk with a higher-scoring one, or enrich
+            # existing filename hits with metadata (e.g., paperless_doc_id)
+            # from matching content chunks.
+            key_to_idx: dict[str, int] = {
+                self._result_key(r, collapse_paperless_sections=True): idx
+                for idx, r in enumerate(results)
+            }
+
             if multi_word:
                 # Evaluate AND across all chunks of the same document so
                 # that terms split across different chunks still match.
@@ -580,9 +589,6 @@ class Searcher:
                     file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
                     file_chunks[file_key].append((doc, meta))
 
-                # Track index into results list per dedup key so we can
-                # replace a weaker chunk with a higher-scoring one.
-                key_to_idx: dict[str, int] = {}
                 for file_key, chunks in file_chunks.items():
                     combined_lower = " ".join(doc.lower() for doc, _ in chunks)
                     if not all(t in combined_lower for t in terms):
@@ -595,15 +601,21 @@ class Searcher:
                         score = self._keyword_score_multi(doc, terms, term_patterns)
                         if key in seen:
                             prev_idx = key_to_idx.get(key)
-                            if prev_idx is not None and score > results[prev_idx]["score"]:
-                                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                            if prev_idx is not None:
+                                if score > results[prev_idx]["score"]:
+                                    results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                                else:
+                                    enriched = self._make_keyword_entry(meta, doc, score)
+                                    if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
+                                        results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
+                                    if not results[prev_idx].get("source_url") and enriched.get("source_url"):
+                                        results[prev_idx]["source_url"] = enriched["source_url"]
                             continue
                         entry = self._make_keyword_entry(meta, doc, score)
                         key_to_idx[key] = len(results)
                         results.append(entry)
                         seen.add(key)
             else:
-                key_to_idx = {}
                 for i, doc in enumerate(all_docs["documents"] or []):
                     doc_lower = doc.lower()
                     if query_lower not in doc_lower:
@@ -613,8 +625,15 @@ class Searcher:
                     score = self._keyword_score(doc, query_lower, word_pattern)
                     if key in seen:
                         prev_idx = key_to_idx.get(key)
-                        if prev_idx is not None and score > results[prev_idx]["score"]:
-                            results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                        if prev_idx is not None:
+                            if score > results[prev_idx]["score"]:
+                                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                            else:
+                                enriched = self._make_keyword_entry(meta, doc, score)
+                                if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
+                                    results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
+                                if not results[prev_idx].get("source_url") and enriched.get("source_url"):
+                                    results[prev_idx]["source_url"] = enriched["source_url"]
                         continue
                     entry = self._make_keyword_entry(meta, doc, score)
                     key_to_idx[key] = len(results)
