@@ -5,6 +5,7 @@ import threading
 import time
 import secrets
 from pathlib import Path
+from typing import Optional
 
 import requests
 import uvicorn
@@ -84,7 +85,7 @@ def _register_paperless_webhook():
         # but the post-consume webhook is configured via /api/workflows/
         # Paginate through all workflow pages to avoid creating duplicates
         found_existing = False
-        url: str | None = f"{PAPERLESS_URL}/api/workflows/"
+        url: Optional[str] = f"{PAPERLESS_URL}/api/workflows/"
         while url:
             resp = requests.get(url, headers=headers, timeout=10)
             if not resp.ok:

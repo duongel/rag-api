@@ -6,6 +6,7 @@ BFS-based neighbourhood queries up to a configurable degree.
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ class LinkGraph:
     # Resolution & traversal
     # ------------------------------------------------------------------
 
-    def resolve(self, link_text: str) -> str | None:
+    def resolve(self, link_text: str) -> Optional[str]:
         """Resolve an Obsidian wikilink target to a relative file path."""
         link_text = link_text.strip()
         if not link_text:
