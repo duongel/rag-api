@@ -121,6 +121,20 @@ class TestMultiWordKeywordSearch:
         assert len(results) == 1
         assert results[0]["file_path"] == "ap.md"
 
+    def test_filename_and_content_match_do_not_duplicate_paperless_result(self):
+        docs = ["invoice details and amount"]
+        metas = [
+            {"file_path": "invoice.pdf", "section": "", "source": "paperless"},
+        ]
+        searcher = self._make_searcher(docs, metas)
+        searcher.indexer._file_sources = {"paperless::invoice.pdf": "paperless"}
+
+        results = searcher.keyword_search("invoice", top_k=5)
+
+        assert len(results) == 1
+        assert results[0]["file_path"] == "invoice.pdf"
+        assert results[0]["match_type"] == "filename"
+
 
 # ---------------------------------------------------------------------------
 # Date sorting
@@ -128,6 +142,30 @@ class TestMultiWordKeywordSearch:
 
 
 class TestDateSorting:
+    def test_sort_by_date_fetches_wider_candidate_pool_without_filter(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = None
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 1000
+        mock_collection.query.return_value = {
+            "ids": [[]],
+            "documents": [[]],
+            "metadatas": [[]],
+            "distances": [[]],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.embed_query", return_value=[0.1] * 768):
+            searcher.semantic_search("test", top_k=5, sort_by_date=True, expand_links=False)
+
+        assert mock_collection.query.call_args.kwargs["n_results"] == 200
+
     def test_sort_by_date_reorders_results(self):
         from rag_api.search import Searcher
 

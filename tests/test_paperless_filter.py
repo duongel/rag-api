@@ -155,6 +155,43 @@ class TestBuildChromadbFilters:
         }
 
 
+class TestPaperlessLookupPagination:
+    @patch("rag_api.search.PAPERLESS_TOKEN", "test-token")
+    @patch("rag_api.search.PAPERLESS_URL", "https://example.com")
+    def test_document_type_lookup_follows_next_page(self):
+        from rag_api.search import _DOCTYPE_NAME_TO_ID, _ensure_paperless_lookups
+
+        _DOCTYPE_NAME_TO_ID.clear()
+
+        def fake_get(url, **kwargs):
+            resp = MagicMock()
+            resp.ok = True
+            if url == "https://example.com/api/tags/":
+                resp.json.return_value = {"results": [], "next": None}
+            elif url == "https://example.com/api/correspondents/":
+                resp.json.return_value = {"results": [], "next": None}
+            elif url == "https://example.com/api/document_types/":
+                resp.json.return_value = {
+                    "results": [{"id": 1, "name": "Invoice"}],
+                    "next": "https://example.com/api/document_types/?page=2",
+                }
+            elif url == "https://example.com/api/document_types/?page=2":
+                resp.json.return_value = {
+                    "results": [{"id": 2, "name": "Contract"}],
+                    "next": None,
+                }
+            else:
+                resp.ok = False
+                resp.json.return_value = {}
+            return resp
+
+        with patch("requests.get", side_effect=fake_get):
+            _ensure_paperless_lookups()
+
+        assert _DOCTYPE_NAME_TO_ID["invoice"] == 1
+        assert _DOCTYPE_NAME_TO_ID["contract"] == 2
+
+
 # ---------------------------------------------------------------------------
 # Semantic search with pre-filter
 # ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@ class Searcher:
         # truly newest documents are captured even when they aren't among
         # the top-k most semantically similar results.  Paperless docs
         # average ~3 chunks each, so we need n_results >> doc_count.
-        fetch_k = max(top_k * 20, 200) if sort_by_date and where else top_k
+        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k
 
         query_kwargs: dict = {
             "query_embeddings": [query_embedding],
@@ -454,7 +454,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}")
+                seen.add(f"{source}::{fp}#")
                 continue
             base = Path(VAULT_PATH)
             full_path = base / fp
@@ -470,7 +470,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}")
+                seen.add(f"{source}::{fp}#")
 
         # 2) Content matches — always case-insensitive via full scan
         try:
@@ -711,15 +711,19 @@ def _ensure_paperless_lookups() -> None:
 
     if not _DOCTYPE_NAME_TO_ID:
         try:
-            resp = requests.get(
-                f"{PAPERLESS_URL}/api/document_types/",
-                params={"page_size": 500}, headers=headers, timeout=10,
-            )
-            if resp.ok:
-                for dt in resp.json().get("results", []):
+            url = f"{PAPERLESS_URL}/api/document_types/"
+            params = {"page_size": 500}
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    break
+                data = resp.json()
+                for dt in data.get("results", []):
                     name = str(dt.get("name", "")).strip()
                     if name:
                         _DOCTYPE_NAME_TO_ID[name.lower()] = dt["id"]
+                url = data.get("next")
+                params = None
         except Exception:
             pass
 
