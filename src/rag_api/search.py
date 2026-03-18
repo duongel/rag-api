@@ -76,9 +76,8 @@ class Searcher:
         fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
 
         output: list[dict] = []
-        stalls = 0
-        prev_unique = 0
-        while True:
+        _MAX_WIDEN_ITERS = 8  # safety cap: at most 256× initial window
+        for _ in range(_MAX_WIDEN_ITERS):
             actual_k = min(fetch_k, corpus_size)
             query_kwargs: dict = {
                 "query_embeddings": [query_embedding],
@@ -98,16 +97,6 @@ class Searcher:
             # than requested because matching candidates are exhausted.
             if len(raw) < actual_k:
                 break
-            # Allow one stall (unique count unchanged) before giving up
-            # — the next wider window may surface new documents beyond
-            # the chunk-dominated prefix.
-            if len(output) <= prev_unique:
-                stalls += 1
-                if stalls >= 2:
-                    break
-            else:
-                stalls = 0
-            prev_unique = len(output)
             # Double the window for the next attempt
             fetch_k = min(fetch_k * 2, corpus_size)
 
