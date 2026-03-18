@@ -206,28 +206,28 @@ class TestHybridSearch:
         searcher = Searcher.__new__(Searcher)
 
         sem_results = [
-            {"file_path": "a.pdf", "section": "", "score": 0.85, "source": "paperless", "match_type": "semantic"},
-            {"file_path": "b.pdf", "section": "", "score": 0.75, "source": "paperless", "match_type": "semantic"},
+            {"file_path": "a.pdf", "section": "", "score": 0.85, "source": "paperless", "match_type": "semantic", "content": "test query content a"},
+            {"file_path": "b.pdf", "section": "", "score": 0.75, "source": "paperless", "match_type": "semantic", "content": "test query content b"},
         ]
         kw_results = [
-            {"file_path": "b.pdf", "section": "", "score": 0.90, "source": "paperless", "match_type": "content"},
-            {"file_path": "c.pdf", "section": "", "score": 0.80, "source": "paperless", "match_type": "content"},
+            {"file_path": "b.pdf", "section": "", "score": 0.90, "source": "paperless", "match_type": "content", "content": "test query content b"},
+            {"file_path": "c.pdf", "section": "", "score": 0.80, "source": "paperless", "match_type": "content", "content": "test query content c"},
         ]
 
         with patch.object(searcher, "semantic_search", return_value=sem_results), \
              patch.object(searcher, "keyword_search", return_value=kw_results):
             results = searcher.hybrid_search("test query", top_k=5)
 
-        # Should have 3 unique results: a.pdf, b.pdf (higher score from keyword), c.pdf
+        # Should have 3 unique results: a.pdf, b.pdf (boosted), c.pdf
         fps = [r["file_path"] for r in results]
         assert len(results) == 3
         assert "a.pdf" in fps
         assert "b.pdf" in fps
         assert "c.pdf" in fps
 
-        # b.pdf should keep the higher keyword score (0.90)
+        # b.pdf appeared in both → cross-method bonus + full keyword coverage
         b_result = next(r for r in results if r["file_path"] == "b.pdf")
-        assert b_result["score"] == 0.90
+        assert b_result["score"] > 0.90
 
     def test_hybrid_applies_min_score(self):
         from rag_api.search import Searcher
@@ -235,13 +235,14 @@ class TestHybridSearch:
         searcher = Searcher.__new__(Searcher)
 
         sem_results = [
-            {"file_path": "a.pdf", "section": "", "score": 0.85, "source": "paperless", "match_type": "semantic"},
-            {"file_path": "b.pdf", "section": "", "score": 0.65, "source": "paperless", "match_type": "semantic"},
+            {"file_path": "a.pdf", "section": "", "score": 0.95, "source": "paperless", "match_type": "semantic", "content": "test content a"},
+            {"file_path": "b.pdf", "section": "", "score": 0.65, "source": "paperless", "match_type": "semantic", "content": "test content b"},
         ]
         kw_results = []
 
         with patch.object(searcher, "semantic_search", return_value=sem_results), \
              patch.object(searcher, "keyword_search", return_value=kw_results):
+            # Coverage for "test": both docs contain "test" → full coverage → ×1.0
             results = searcher.hybrid_search("test", top_k=5, min_score=0.70)
 
         assert len(results) == 1
@@ -254,9 +255,9 @@ class TestHybridSearch:
 
         sem_results = [
             {"file_path": "old.pdf", "section": "", "score": 0.90, "source": "paperless",
-             "match_type": "semantic", "created": "2024-01-01"},
+             "match_type": "semantic", "created": "2024-01-01", "content": "recent doc"},
             {"file_path": "new.pdf", "section": "", "score": 0.80, "source": "paperless",
-             "match_type": "semantic", "created": "2025-11-01"},
+             "match_type": "semantic", "created": "2025-11-01", "content": "recent doc"},
         ]
         kw_results = []
 

@@ -120,6 +120,20 @@ class Searcher:
         "suche", "summiere", "zeige", "finde", "liste",
     }
 
+    # German query-term expansion for hybrid search.  When a content
+    # word appears as a key, the synonyms are *added* to the keyword
+    # coverage check so that semantically related documents get a boost.
+    _QUERY_EXPANSIONS: dict = {
+        "kosten": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis"],
+        "rechnung": ["betrag", "kosten", "zahlung", "invoice"],
+        "kaufvertrag": ["kauf", "vertrag", "urkunde", "notar"],
+        "vertrag": ["kaufvertrag", "urkunde", "vereinbarung"],
+        "miete": ["mietvertrag", "kaltmiete", "warmmiete", "nebenkosten"],
+        "gehalt": ["lohn", "vergütung", "abrechnung", "brutto", "netto"],
+        "steuer": ["steuerbescheid", "finanzamt", "einkommensteuer"],
+        "versicherung": ["police", "beitrag", "versicherungsschein"],
+    }
+
     def hybrid_search(
         self, query: str, top_k: int = 5,
         paperless_tags: Optional[list[str]] = None,
@@ -135,9 +149,11 @@ class Searcher:
         content words (e.g. "summiere alle kosten für den vw golf"
         becomes keyword query "kosten vw golf").
 
-        When a document appears in *both* result sets it receives a
-        bonus (+0.05) because cross-method agreement is a strong
-        relevance signal.
+        After merging, a **keyword coverage re-rank** adjusts each
+        result's score based on how many expanded query terms appear in
+        the document.  This penalises results that match semantically
+        but lack the actual content words the user asked for (e.g.
+        "Kilometerstand" for a "Kosten" query).
         """
         sem_results = self.semantic_search(
             query, top_k=top_k,
@@ -147,12 +163,11 @@ class Searcher:
         )
 
         # Build a keyword query from content words only
-        kw_query = " ".join(
+        content_words = [
             w for w in query.lower().split()
             if w not in self._STOP_WORDS and len(w) > 1
-        )
-        if not kw_query:
-            kw_query = query
+        ]
+        kw_query = " ".join(content_words) if content_words else query
 
         kw_results = self.keyword_search(
             kw_query, top_k=top_k,
@@ -168,7 +183,8 @@ class Searcher:
 
         for r in sem_results:
             key = f"{r.get('source', 'obsidian')}::{r['file_path']}#{r.get('section', '')}"
-            seen[key] = r
+            if key not in seen or r["score"] > seen[key]["score"]:
+                seen[key] = r
             sem_keys.add(key)
 
         for r in kw_results:
@@ -182,6 +198,23 @@ class Searcher:
         for key in sem_keys & kw_keys:
             seen[key] = dict(seen[key])
             seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
+
+        # ── Keyword coverage re-rank ──
+        # Expand content words with synonyms, then check how many
+        # expanded terms appear in each document.  Results with low
+        # coverage get a score penalty (up to −30 %).
+        expanded = set(content_words)
+        for w in content_words:
+            expanded.update(self._QUERY_EXPANSIONS.get(w, []))
+        if expanded:
+            for key, r in seen.items():
+                doc_lower = r.get("content", "").lower()
+                matched = sum(1 for t in expanded if t in doc_lower)
+                coverage = matched / len(expanded)
+                # 0 coverage → ×0.7, full coverage → ×1.0
+                r = dict(r)
+                r["score"] = round(r["score"] * (0.7 + 0.3 * coverage), 4)
+                seen[key] = r
 
         merged = list(seen.values())
 
