@@ -112,7 +112,11 @@ class Searcher:
             fetch_k = min(fetch_k * 2, corpus_size)
 
         if expand_links and not where:
-            output = self._expand_with_links(output, query_embedding, top_k)
+            # Only seed graph expansion with the best top_k semantic
+            # hits so that low-relevance tail results from the wider
+            # dedup window don't promote unrelated linked notes.
+            seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:top_k]
+            output = self._expand_with_links(seeds, query_embedding, top_k)
 
         if sort_by_date:
             if min_score > 0:
