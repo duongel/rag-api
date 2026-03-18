@@ -849,21 +849,34 @@ _CORR_NAME_TO_ID: dict[str, int] = {}
 _LOOKUP_COMPLETE: dict[str, bool] = {"tags": False, "doctypes": False, "corrs": False}
 
 
-def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
-    """Lazily fetch and cache Paperless tags / document types / correspondents."""
+def _ensure_paperless_lookups(
+    force_refresh: bool = False,
+    *,
+    need_tags: bool = False,
+    need_doctypes: bool = False,
+    need_corrs: bool = False,
+) -> None:
+    """Lazily fetch and cache required Paperless lookups only.
+
+    Avoids fetching unrelated lookup tables (which can add tens of seconds
+    of latency during API outages) when only one filter type is needed.
+    """
     import requests
 
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
 
     if force_refresh:
-        _TAG_NAME_TO_ID.clear()
-        _DOCTYPE_NAME_TO_ID.clear()
-        _CORR_NAME_TO_ID.clear()
-        _LOOKUP_COMPLETE["tags"] = False
-        _LOOKUP_COMPLETE["doctypes"] = False
-        _LOOKUP_COMPLETE["corrs"] = False
+        if need_tags:
+            _TAG_NAME_TO_ID.clear()
+            _LOOKUP_COMPLETE["tags"] = False
+        if need_doctypes:
+            _DOCTYPE_NAME_TO_ID.clear()
+            _LOOKUP_COMPLETE["doctypes"] = False
+        if need_corrs:
+            _CORR_NAME_TO_ID.clear()
+            _LOOKUP_COMPLETE["corrs"] = False
 
-    if not _LOOKUP_COMPLETE["tags"] and not _TAG_NAME_TO_ID:
+    if need_tags and not _LOOKUP_COMPLETE["tags"] and not _TAG_NAME_TO_ID:
         try:
             url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
             params: Optional[dict] = {"page_size": 500}
@@ -884,7 +897,7 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         except Exception:
             _LOOKUP_COMPLETE["tags"] = False
 
-    if not _LOOKUP_COMPLETE["doctypes"] and not _DOCTYPE_NAME_TO_ID:
+    if need_doctypes and not _LOOKUP_COMPLETE["doctypes"] and not _DOCTYPE_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/document_types/"
             params = {"page_size": 500}
@@ -905,7 +918,7 @@ def _ensure_paperless_lookups(force_refresh: bool = False) -> None:
         except Exception:
             _LOOKUP_COMPLETE["doctypes"] = False
 
-    if not _LOOKUP_COMPLETE["corrs"] and not _CORR_NAME_TO_ID:
+    if need_corrs and not _LOOKUP_COMPLETE["corrs"] and not _CORR_NAME_TO_ID:
         try:
             url = f"{PAPERLESS_URL}/api/correspondents/"
             params = {"page_size": 500}
@@ -944,7 +957,11 @@ def _query_paperless_api(
     """
     import requests
 
-    _ensure_paperless_lookups()
+    _ensure_paperless_lookups(
+        need_tags=bool(tags),
+        need_doctypes=bool(document_type),
+        need_corrs=bool(correspondent),
+    )
 
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
     params: dict = {"page_size": 500, "fields": "id"}
@@ -955,7 +972,7 @@ def _query_paperless_api(
         for tag_name in tags:
             tid = _TAG_NAME_TO_ID.get(tag_name.lower())
             if tid is None:
-                _ensure_paperless_lookups(force_refresh=True)
+                _ensure_paperless_lookups(force_refresh=True, need_tags=True)
                 tid = _TAG_NAME_TO_ID.get(tag_name.lower())
                 if tid is None:
                     if not _LOOKUP_COMPLETE["tags"]:
@@ -970,7 +987,7 @@ def _query_paperless_api(
     if document_type:
         dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
         if dtid is None:
-            _ensure_paperless_lookups(force_refresh=True)
+            _ensure_paperless_lookups(force_refresh=True, need_doctypes=True)
             dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
             if dtid is None:
                 if not _LOOKUP_COMPLETE["doctypes"]:
@@ -984,7 +1001,7 @@ def _query_paperless_api(
     if correspondent:
         cid = _CORR_NAME_TO_ID.get(correspondent.lower())
         if cid is None:
-            _ensure_paperless_lookups(force_refresh=True)
+            _ensure_paperless_lookups(force_refresh=True, need_corrs=True)
             cid = _CORR_NAME_TO_ID.get(correspondent.lower())
             if cid is None:
                 if not _LOOKUP_COMPLETE["corrs"]:

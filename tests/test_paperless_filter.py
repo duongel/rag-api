@@ -189,7 +189,7 @@ class TestPaperlessLookupPagination:
             return resp
 
         with patch("requests.get", side_effect=fake_get):
-            _ensure_paperless_lookups()
+            _ensure_paperless_lookups(need_doctypes=True)
 
         assert _DOCTYPE_NAME_TO_ID["invoice"] == 1
         assert _DOCTYPE_NAME_TO_ID["contract"] == 2
