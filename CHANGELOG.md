@@ -1,3 +1,12 @@
+## [1.11.1](https://github.com/duongel/rag-api/compare/v1.11.0...v1.11.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* **search:** include file_path in specific-term coverage check ([e28f321](https://github.com/duongel/rag-api/commit/e28f321fd1d30df67bd552e46cad0f4804230fbd))
+* **search:** penalize results missing specific query terms ([b888b4c](https://github.com/duongel/rag-api/commit/b888b4cca140722a55931a556cc93c586c070505))
+* **search:** skip specific-term penalty for empty-content filename hits ([e0705f2](https://github.com/duongel/rag-api/commit/e0705f23766d2dc3d603b78effbf31bb1e0034cd))
+
 # [1.11.0](https://github.com/duongel/rag-api/compare/v1.10.3...v1.11.0) (2026-03-19)
 
 
