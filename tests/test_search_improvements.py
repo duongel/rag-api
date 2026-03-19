@@ -440,6 +440,108 @@ class TestHybridSearch:
         # Exact term match should be boosted (or at least never reduced)
         assert results[0]["score"] >= 0.90
 
+    def test_hybrid_cost_queries_promote_invoice_above_status_note(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {
+                "file_path": "status-note.pdf",
+                "section": "",
+                "score": 0.7922,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Statusnotiz\n"
+                    "Tags: auto, compact\n\n"
+                    "Der aktuelle Stand des Fahrzeugs ist dokumentiert.\n"
+                    "Die geplante Jahresfahrleistung betraegt 6.000 km."
+                ),
+            },
+            {
+                "file_path": "invoice.pdf",
+                "section": "",
+                "score": 0.7757,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Fahrzeugrechnung\n"
+                    "Tags: auto, compact\n"
+                    "Document Type: Rechnung\n\n"
+                    "Rechnung zu Ihren Fahrzeugkosten.\n"
+                    "Gesamtbetrag 300,00 EUR."
+                ),
+            },
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search(
+                "wie viel habe ich insgesamt fuer mein auto in 2025 ausgegeben",
+                top_k=5,
+            )
+
+        assert results[0]["file_path"] == "invoice.pdf"
+        assert results[0]["score"] > results[1]["score"]
+
+    def test_hybrid_expense_verbs_do_not_boost_unrelated_insurance_terms(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {
+                "file_path": "repair-invoice.pdf",
+                "section": "",
+                "score": 0.80,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Reparaturrechnung\n"
+                    "Document Type: Rechnung\n\n"
+                    "Rechnung fuer eine Reparatur.\n"
+                    "Gesamtbetrag 450,00 EUR."
+                ),
+            },
+            {
+                "file_path": "insurance-note.pdf",
+                "section": "",
+                "score": 0.81,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Versicherungsschein\n"
+                    "Document Type: Vertrag\n\n"
+                    "Informationen zur Fahrzeugversicherung und zum Versicherungsschein."
+                ),
+            },
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search(
+                "was hat die reparatur gekostet",
+                top_k=5,
+            )
+
+        assert results[0]["file_path"] == "repair-invoice.pdf"
+
+    def test_hybrid_keeps_expense_verbs_in_keyword_query(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        with patch.object(searcher, "semantic_search", return_value=[]), \
+             patch.object(searcher, "keyword_search", return_value=[]) as mock_keyword:
+            searcher.hybrid_search("was hat es gekostet", top_k=5)
+
+        assert mock_keyword.call_args.args[0] == "gekostet"
+
     def test_hybrid_respects_sort_by_date(self):
         from rag_api.search import Searcher
 
