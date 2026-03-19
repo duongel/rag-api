@@ -67,6 +67,13 @@ docker pull ghcr.io/duongel/rag-api:latest
 
 [`SKILL.md`](./SKILL.md) contains endpoint documentation, curl examples, and copy-paste tool definitions for all major providers. Serve it as context to any LLM agent — no MCP server required.
 
+Recent search additions:
+
+- `POST /hybrid-search` combines semantic and keyword retrieval for mixed natural-language + exact-term queries
+- `sort_by_date: true` supports "latest / newest" document queries
+- `paperless_document_type` adds structured Paperless filtering by document type
+- For Paperless questions, agents should first set the strongest available `paperless_*` filters and only then run semantic, hybrid, or keyword search on that filtered subset
+
 | Provider | Format | Where to use |
 |---|---|---|
 | **OpenAI** | `functions` / `tools` array | ChatGPT, GPT-4o, Assistants API, Azure OpenAI |
@@ -78,27 +85,47 @@ docker pull ghcr.io/duongel/rag-api:latest
 
 **Simplest approach:** Pass the full [`SKILL.md`](./SKILL.md) as system context — the agent discovers the endpoints and calls them directly.
 
+Typical endpoint choices:
+
+- Use `/search` for concepts, explanations, and broad semantic questions
+- Use `/keyword-search` for abbreviations, identifiers, filenames, and exact strings
+- Use `/hybrid-search` for queries like "Kaufvertrag Grundstück Montabaur" or "letzte Telekom Rechnung"
+- For Paperless queries, prefer `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, and `paperless_document_type` before ranking
+
 ## Architecture
 
 ```mermaid
 graph LR
+    AGENT["LLM Agent<br><sub>uses SKILL.md / tools</sub>"]:::ext
+
     subgraph Docker Network
-        RAG["rag-api<br><sub>FastAPI · ChromaDB</sub>"]
+        API["rag-api<br><sub>FastAPI · ChromaDB</sub>"]
+        SEARCH["/search · /keyword-search · /hybrid-search"]
+        FILTER["Paperless pre-filter<br><sub>tags / correspondent / year / document type</sub>"]
+        CHROMA["ChromaDB index<br><sub>semantic + keyword retrieval</sub>"]
         OLL["ollama<br><sub>nomic-embed-text</sub>"]
     end
 
     VAULT["Obsidian Vault"]:::ext
     PAPER["Paperless-NGX"]:::ext
 
-    RAG -->|embeddings| OLL
-    VAULT -->|read-only mount| RAG
-    PAPER <-->|REST API · webhook| RAG
+    AGENT -->|HTTP API| API
+    API --> SEARCH
+    SEARCH --> FILTER
+    FILTER <-->|REST API| PAPER
+    SEARCH --> CHROMA
+    CHROMA -->|embeddings| OLL
+    VAULT -->|read-only mount| CHROMA
+    PAPER -->|content + metadata| CHROMA
+    PAPER -->|webhook| API
 
     classDef ext fill:#f0f0f0,stroke:#999,stroke-width:1px,color:#333
 ```
 
 - Obsidian files are watched via inotify and indexed on change
 - Paperless documents are fetched via REST API; a webhook is auto-registered for real-time updates
+- Paperless queries can be pre-filtered by tag, correspondent, year, and document type before semantic or hybrid ranking
+- `/hybrid-search` combines semantic and keyword retrieval, while `sort_by_date` supports newest-first document queries
 - All data-bearing endpoints require a bearer token by default
 
 ## Access Modes

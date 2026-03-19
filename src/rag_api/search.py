@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .config import VAULT_PATH, DATA_SOURCES
+from .config import VAULT_PATH, DATA_SOURCES, PAPERLESS_URL, PAPERLESS_TOKEN
 from .embeddings import embed_query
 from .indexer import Indexer
 
@@ -43,29 +43,89 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
+        sort_by_date: bool = False,
+        min_score: float = 0.0,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
         append linked notes up to 2 degrees of separation.
 
         Paperless filter parameters build a ChromaDB ``where`` clause so
         only matching documents are considered.
+
+        When *sort_by_date* is True, results above ``min_score`` are
+        re-sorted by creation date (newest first).  This is useful for
+        queries like "letzte Rechnung" where recency matters more than
+        marginal score differences.
         """
         query_embedding = embed_query(query)
 
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
+            paperless_document_type,
         )
 
-        query_kwargs: dict = {
-            "query_embeddings": [query_embedding],
-            "n_results": min(top_k, self.collection.count() or 1),
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if where:
-            query_kwargs["where"] = where
+        # Fetch more than top_k so that deduplication (which collapses
+        # multiple chunks from the same document/section) doesn't
+        # under-fill the result set.  Both paths use the same adaptive
+        # widening loop: start with a generous initial window, dedup,
+        # and double the fetch size when unique results are still below
+        # top_k.  Date-sorting gets a wider initial window because we
+        # need to capture truly newest documents regardless of score.
+        corpus_size = self.collection.count() or 1
+        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
 
-        results = self.collection.query(**query_kwargs)
+        output: list[dict] = []
+        _MAX_WIDEN_ITERS = 8  # safety cap: at most 256× initial window
+        for _ in range(_MAX_WIDEN_ITERS):
+            actual_k = min(fetch_k, corpus_size)
+            query_kwargs: dict = {
+                "query_embeddings": [query_embedding],
+                "n_results": actual_k,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where:
+                query_kwargs["where"] = where
 
+            results = self.collection.query(**query_kwargs)
+            raw = self._parse_query_results(results)
+            output = self._dedup_results(raw)
+
+            if len(output) >= top_k or actual_k >= corpus_size:
+                break
+            # When a filter is active, ChromaDB may return fewer rows
+            # than requested because matching candidates are exhausted.
+            if len(raw) < actual_k:
+                break
+            # Double the window for the next attempt
+            fetch_k = min(fetch_k * 2, corpus_size)
+
+        if expand_links and not where:
+            # For score-ranked search, only seed graph expansion with the
+            # best top_k semantic hits so low-relevance tails do not
+            # promote unrelated linked notes.
+            #
+            # For date-sorted search, keep the full widened semantic
+            # candidate pool so newer documents outside the score top_k
+            # are still eligible after date reordering.
+            seed_k = len(output) if sort_by_date else top_k
+            seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:seed_k]
+            output = self._expand_with_links(seeds, query_embedding, seed_k)
+
+        if min_score > 0:
+            output = [r for r in output if r["score"] >= min_score]
+
+        if sort_by_date:
+            output.sort(
+                key=lambda r: r.get("created", ""),
+                reverse=True,
+            )
+
+        return output[:top_k]
+
+    @staticmethod
+    def _parse_query_results(results: dict) -> list[dict]:
+        """Convert raw ChromaDB query output into a flat result list."""
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
             meta = results["metadatas"][0][i]
@@ -79,12 +139,202 @@ class Searcher:
             }
             if meta.get("paperless_doc_id"):
                 entry["paperless_doc_id"] = meta["paperless_doc_id"]
+            if meta.get("created"):
+                entry["created"] = meta["created"]
             output.append(entry)
+        return output
 
-        if expand_links and not where:
-            output = self._expand_with_links(output, query_embedding, top_k)
+    @staticmethod
+    def _dedup_results(results: list[dict]) -> list[dict]:
+        """Keep only the best-scoring entry per source/file/section tuple."""
+        deduped: dict[str, dict] = {}
+        for result in results:
+            key = Searcher._result_key(result)
+            current = deduped.get(key)
+            if current is None or result["score"] > current["score"]:
+                deduped[key] = result
+        return list(deduped.values())
 
-        return output[:top_k]
+    @staticmethod
+    def _result_key(result: dict, *, collapse_paperless_sections: bool = False) -> str:
+        """Build a stable dedup key for search results.
+
+        When ``collapse_paperless_sections`` is enabled, Paperless hits are
+        deduplicated on document level (source + file path) so filename hits
+        and chunk hits cannot appear as duplicates for the same PDF.
+        """
+        source = result.get("source", "obsidian")
+        file_path = result["file_path"]
+        if collapse_paperless_sections and source == "paperless":
+            return f"{source}::{file_path}"
+        return f"{source}::{file_path}#{result.get('section', '')}"
+
+    @staticmethod
+    def _make_keyword_entry(meta: dict, doc: str, score: float) -> dict:
+        """Build a keyword-search result dict from chunk metadata."""
+        entry: dict = {
+            "file_path": meta["file_path"],
+            "section": meta.get("section", ""),
+            "content": doc[:1000],
+            "score": score,
+            "match_type": "content",
+            "source": meta.get("source", "obsidian"),
+        }
+        if meta.get("paperless_doc_id"):
+            entry["paperless_doc_id"] = meta["paperless_doc_id"]
+        if meta.get("created"):
+            entry["created"] = meta["created"]
+        return entry
+
+    # ------------------------------------------------------------------
+    # Hybrid search (semantic + keyword)
+    # ------------------------------------------------------------------
+
+    # German stop words filtered out when building keyword queries from
+    # natural-language input in hybrid search.
+    _STOP_WORDS: set = {
+        "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer",
+        "einem", "einen", "und", "oder", "aber", "als", "auch", "auf",
+        "aus", "bei", "bis", "da", "dass", "denn", "doch", "du", "er",
+        "es", "für", "hat", "ich", "ihr", "im", "in", "ist", "ja",
+        "kann", "man", "mit", "nach", "nicht", "noch", "nun", "nur",
+        "ob", "schon", "sich", "sie", "sind", "so", "über", "um",
+        "von", "vor", "was", "wenn", "wer", "wie", "wir", "wird",
+        "zu", "zum", "zur", "alle", "wann", "war", "were", "vom",
+        "suche", "summiere", "zeige", "finde", "liste",
+    }
+
+    # German query-term expansion for hybrid search.  When a content
+    # word appears as a key, the synonyms are *added* to the keyword
+    # coverage check so that semantically related documents get a boost.
+    _QUERY_EXPANSIONS: dict = {
+        "kosten": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis"],
+        "rechnung": ["betrag", "kosten", "zahlung", "invoice"],
+        "kaufvertrag": ["kauf", "vertrag", "urkunde", "notar"],
+        "vertrag": ["kaufvertrag", "urkunde", "vereinbarung"],
+        "miete": ["mietvertrag", "kaltmiete", "warmmiete", "nebenkosten"],
+        "gehalt": ["lohn", "vergütung", "abrechnung", "brutto", "netto"],
+        "steuer": ["steuerbescheid", "finanzamt", "einkommensteuer"],
+        "versicherung": ["police", "beitrag", "versicherungsschein"],
+    }
+
+    def hybrid_search(
+        self, query: str, top_k: int = 5,
+        expand_links: bool = True,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
+        sort_by_date: bool = False,
+        min_score: float = 0.0,
+    ) -> list[dict]:
+        """Run semantic **and** keyword search, merge and deduplicate.
+
+        The keyword search uses a cleaned version of the query with stop
+        words removed so that multi-word AND matching works on the
+        content words (e.g. "summiere alle kosten für den vw golf"
+        becomes keyword query "kosten vw golf").
+
+        After merging, a **keyword/synonym re-rank** adds a small boost
+        for exact term coverage and additional synonym coverage. Exact
+        matches are never penalized for not containing all synonyms.
+        """
+        # When sorting by date we need wider candidate pools so that
+        # truly newest documents are captured even when they aren't
+        # among the top-k most relevant results.
+        candidate_k = top_k * 10 if sort_by_date else top_k * 3
+
+        sem_results = self.semantic_search(
+            query,
+            top_k=candidate_k,
+            expand_links=expand_links,
+            paperless_tags=paperless_tags,
+            paperless_correspondent=paperless_correspondent,
+            paperless_created_year=paperless_created_year,
+            paperless_document_type=paperless_document_type,
+            sort_by_date=sort_by_date,
+            # Apply min_score after hybrid merge/rerank so documents are
+            # not dropped before cross-method and keyword/synonym boosts.
+            min_score=0.0,
+        )
+
+        # Build a keyword query from content words only
+        content_words = [
+            w for w in query.lower().split()
+            if w not in self._STOP_WORDS and len(w) > 1
+        ]
+        kw_query = " ".join(content_words) if content_words else query
+
+        kw_results = self.keyword_search(
+            kw_query, top_k=candidate_k if sort_by_date else top_k,
+            paperless_tags=paperless_tags,
+            paperless_correspondent=paperless_correspondent,
+            paperless_created_year=paperless_created_year,
+            paperless_document_type=paperless_document_type,
+        )
+
+        # Merge result sets using stable dedup keys.
+        # Paperless items are deduped by document path so filename and chunk
+        # matches for the same PDF do not appear twice.
+        seen: dict[str, dict] = {}
+        sem_keys: set[str] = set()
+        kw_keys: set[str] = set()
+
+        for r in sem_results:
+            key = self._result_key(r, collapse_paperless_sections=True)
+            if key not in seen or r["score"] > seen[key]["score"]:
+                seen[key] = r
+            sem_keys.add(key)
+
+        for r in kw_results:
+            key = self._result_key(r, collapse_paperless_sections=True)
+            kw_keys.add(key)
+            if key not in seen or r["score"] > seen[key]["score"]:
+                seen[key] = r
+
+        # Cross-method bonus: docs found by BOTH methods are more relevant
+        _CROSS_BONUS = 0.05
+        for key in sem_keys & kw_keys:
+            seen[key] = dict(seen[key])
+            seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
+
+        # ── Keyword/synonym re-rank ──
+        # Exact content words should never be penalized because a synonym is
+        # missing. Instead, exact and synonym hits provide additive boosts.
+        exact_terms = set(content_words)
+        synonym_terms: set[str] = set()
+        for w in content_words:
+            synonym_terms.update(self._QUERY_EXPANSIONS.get(w, []))
+        synonym_terms -= exact_terms
+
+        if exact_terms or synonym_terms:
+            for key, r in seen.items():
+                doc_lower = r.get("content", "").lower()
+                r = dict(r)
+
+                exact_cov = 0.0
+                if exact_terms:
+                    exact_cov = sum(1 for t in exact_terms if t in doc_lower) / len(exact_terms)
+
+                synonym_cov = 0.0
+                if synonym_terms:
+                    synonym_cov = sum(1 for t in synonym_terms if t in doc_lower) / len(synonym_terms)
+
+                bonus = (0.05 * exact_cov) + (0.10 * synonym_cov)
+                r["score"] = round(r["score"] + bonus, 4)
+                seen[key] = r
+
+        merged = list(seen.values())
+
+        if min_score > 0:
+            merged = [r for r in merged if r["score"] >= min_score]
+
+        if sort_by_date:
+            merged.sort(key=lambda r: r.get("created", ""), reverse=True)
+        else:
+            merged.sort(key=lambda r: r["score"], reverse=True)
+
+        return merged[:top_k]
 
     # ------------------------------------------------------------------
     # Link-graph expansion
@@ -213,6 +463,8 @@ class Searcher:
                 }
                 if meta.get("paperless_doc_id"):
                     entry["paperless_doc_id"] = meta["paperless_doc_id"]
+                if meta.get("created"):
+                    entry["created"] = meta["created"]
                 return entry
         except Exception:
             pass
@@ -227,8 +479,12 @@ class Searcher:
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
     ) -> list[dict]:
         """Search filenames and document content for *query* (case-insensitive).
+
+        Multi-word queries use AND logic: every word must appear in the
+        document.  Single-word queries match as a substring as before.
 
         Scoring is based on match location, word-boundary matches, and
         frequency so that results containing the query more often or as a
@@ -239,6 +495,7 @@ class Searcher:
         """
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
+            paperless_document_type,
         )
         has_filter = where is not None
 
@@ -257,15 +514,28 @@ class Searcher:
                 return []
 
         query_lower = query.lower()
+        terms = query_lower.split()
+        multi_word = len(terms) > 1
+
         word_pattern = re.compile(r"\b" + re.escape(query_lower) + r"\b", re.IGNORECASE)
+        term_patterns = [
+            re.compile(r"\b" + re.escape(t) + r"\b", re.IGNORECASE)
+            for t in terms
+        ] if multi_word else [word_pattern]
+
         results: list[dict] = []
         seen: set[str] = set()
 
         # 1) Filename matches
         for doc_key, source in self.indexer._file_sources.items():
             fp = self.indexer._file_path_from_key(doc_key)
-            if query_lower not in fp.lower():
-                continue
+            fp_lower = fp.lower()
+            if multi_word:
+                if not all(t in fp_lower for t in terms):
+                    continue
+            else:
+                if query_lower not in fp_lower:
+                    continue
             if has_filter:
                 if source != "paperless":
                     continue
@@ -283,7 +553,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}")
+                seen.add(self._result_key({"source": source, "file_path": fp}, collapse_paperless_sections=True))
                 continue
             base = Path(VAULT_PATH)
             full_path = base / fp
@@ -299,7 +569,7 @@ class Searcher:
                         "source": source,
                     }
                 )
-                seen.add(f"{source}::{fp}")
+                seen.add(self._result_key({"source": source, "file_path": fp}, collapse_paperless_sections=True))
 
         # 2) Content matches — always case-insensitive via full scan
         try:
@@ -307,26 +577,87 @@ class Searcher:
             if where is not None:
                 get_kwargs["where"] = where
             all_docs = self.collection.get(**get_kwargs)
-            for i, doc in enumerate(all_docs["documents"] or []):
-                if query_lower not in doc.lower():
-                    continue
-                meta = all_docs["metadatas"][i]
-                key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}#{meta.get('section', '')}"
-                if key in seen:
-                    continue
-                score = self._keyword_score(doc, query_lower, word_pattern)
-                entry: dict = {
-                    "file_path": meta["file_path"],
-                    "section": meta.get("section", ""),
-                    "content": doc[:1000],
-                    "score": score,
-                    "match_type": "content",
-                    "source": meta.get("source", "obsidian"),
-                }
-                if meta.get("paperless_doc_id"):
-                    entry["paperless_doc_id"] = meta["paperless_doc_id"]
-                results.append(entry)
-                seen.add(key)
+
+            # Track index into results list per dedup key so we can
+            # replace a weaker chunk with a higher-scoring one, or enrich
+            # existing filename hits with metadata (e.g., paperless_doc_id)
+            # from matching content chunks.
+            key_to_idx: dict[str, int] = {
+                self._result_key(r, collapse_paperless_sections=True): idx
+                for idx, r in enumerate(results)
+            }
+
+            if multi_word:
+                # Evaluate AND across all chunks of the same document so
+                # that terms split across different chunks still match.
+                from collections import defaultdict
+                file_chunks: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+                for i, doc in enumerate(all_docs["documents"] or []):
+                    meta = all_docs["metadatas"][i]
+                    file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
+                    file_chunks[file_key].append((doc, meta))
+
+                for file_key, chunks in file_chunks.items():
+                    combined_lower = " ".join(doc.lower() for doc, _ in chunks)
+                    if not all(t in combined_lower for t in terms):
+                        continue
+                    for doc, meta in chunks:
+                        doc_lower = doc.lower()
+                        if not any(t in doc_lower for t in terms):
+                            continue
+                        key = self._result_key(meta, collapse_paperless_sections=True)
+                        score = self._keyword_score_multi(doc, terms, term_patterns)
+                        if key in seen:
+                            prev_idx = key_to_idx.get(key)
+                            if prev_idx is not None:
+                                if score > results[prev_idx]["score"]:
+                                    results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                                else:
+                                    enriched = self._make_keyword_entry(meta, doc, score)
+                                    if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
+                                        results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
+                            continue
+                        entry = self._make_keyword_entry(meta, doc, score)
+                        key_to_idx[key] = len(results)
+                        results.append(entry)
+                        seen.add(key)
+            else:
+                for i, doc in enumerate(all_docs["documents"] or []):
+                    doc_lower = doc.lower()
+                    if query_lower not in doc_lower:
+                        continue
+                    meta = all_docs["metadatas"][i]
+                    key = self._result_key(meta, collapse_paperless_sections=True)
+                    score = self._keyword_score(doc, query_lower, word_pattern)
+                    if key in seen:
+                        prev_idx = key_to_idx.get(key)
+                        if prev_idx is not None:
+                            if score > results[prev_idx]["score"]:
+                                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+                            else:
+                                enriched = self._make_keyword_entry(meta, doc, score)
+                                if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
+                                    results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
+                        continue
+                    entry = self._make_keyword_entry(meta, doc, score)
+                    key_to_idx[key] = len(results)
+                    results.append(entry)
+                    seen.add(key)
+
+            # Backfill created dates for filename matches from content metadata
+            created_by_key: dict[str, str] = {}
+            for meta in (all_docs.get("metadatas") or []):
+                fp = meta.get("file_path", "")
+                source = meta.get("source", "obsidian")
+                created = meta.get("created", "")
+                key = f"{source}::{fp}"
+                if fp and created and key not in created_by_key:
+                    created_by_key[key] = created
+            for r in results:
+                if not r.get("created"):
+                    key = f"{r.get('source', 'obsidian')}::{r['file_path']}"
+                    if key in created_by_key:
+                        r["created"] = created_by_key[key]
         except Exception:
             pass
 
@@ -352,6 +683,51 @@ class Searcher:
         pos = doc_lower.find(query_lower)
         pos_bonus = 0.05 if pos >= 0 and pos < len(doc) * 0.2 else 0.0
         return round(0.70 + freq_bonus + word_bonus + pos_bonus, 4)
+
+    @staticmethod
+    def _keyword_score_multi(
+        doc: str, terms: list[str], term_patterns: list[re.Pattern[str]],
+    ) -> float:
+        """Score a document against multiple AND-ed keyword terms.
+
+        Base score is 0.70.  Per-term bonuses (averaged):
+        - frequency:  +0.03 per occurrence (max +0.15)
+        - whole-word: +0.05 if at least one word-boundary match
+        - proximity:  +0.05 if any two terms appear within 200 chars of each other
+        """
+        doc_lower = doc.lower()
+        total_freq = 0.0
+        total_word = 0.0
+        # (position, term_index) tuples for cross-term proximity check
+        term_positions: list[tuple[int, int]] = []
+        for term_idx, (term, pattern) in enumerate(zip(terms, term_patterns)):
+            count = doc_lower.count(term)
+            total_freq += min(count * 0.03, 0.15)
+            if pattern.search(doc):
+                total_word += 0.05
+            # Collect ALL occurrences so proximity check considers
+            # close later occurrences, not just distant first ones.
+            start = 0
+            while True:
+                pos = doc_lower.find(term, start)
+                if pos < 0:
+                    break
+                term_positions.append((pos, term_idx))
+                start = pos + 1
+        n = len(terms)
+        avg_freq = total_freq / n
+        avg_word = total_word / n
+        # Proximity bonus: two DISTINCT terms within 200 chars
+        proximity_bonus = 0.0
+        if len(term_positions) >= 2:
+            term_positions.sort()
+            for j in range(len(term_positions) - 1):
+                pos_a, idx_a = term_positions[j]
+                pos_b, idx_b = term_positions[j + 1]
+                if idx_a != idx_b and pos_b - pos_a < 200:
+                    proximity_bonus = 0.05
+                    break
+        return round(0.70 + avg_freq + avg_word + proximity_bonus, 4)
 
     # ------------------------------------------------------------------
     # Single note retrieval
@@ -408,18 +784,58 @@ def _build_chromadb_filters(
     tags: Optional[list[str]] = None,
     correspondent: Optional[str] = None,
     created_year: Optional[int] = None,
+    document_type: Optional[str] = None,
 ) -> Optional[dict]:
-    """Build a coarse ChromaDB ``where`` filter from Paperless parameters.
+    """Build a ChromaDB ``where`` filter by querying the Paperless API first.
 
-    Tags are matched via ``ptag_<name>`` metadata keys (exact, case-insensitive).
-    Correspondent is matched via ``correspondent_name_lc`` (exact, case-insensitive).
-    Year is matched via ``created_year`` (exact integer equality).
+    When Paperless credentials are configured and at least one filter is set,
+    this function queries the Paperless REST API to obtain the exact set of
+    matching document IDs.  The IDs are turned into a ChromaDB ``$or``
+    filter on ``paperless_doc_id``.
+
+    This is more accurate than replicating Paperless metadata in ChromaDB
+    because Paperless handles tags, document types, correspondents, and
+    date ranges authoritatively — including manually-assigned tags that
+    don't appear anywhere in the document text.
+
+    Falls back to basic ``{"source": "paperless"}`` if no filters are
+    provided, and to ``None`` if Paperless is not configured.
     """
-    if not any([tags, correspondent, created_year]):
+    has_filter = any([tags, correspondent, created_year, document_type])
+    if not has_filter:
         return None
 
-    conditions: list[dict] = [{"source": "paperless"}]
+    # Try Paperless API pre-filter (authoritative)
+    if PAPERLESS_URL and PAPERLESS_TOKEN:
+        # Cap passed into the API helper so it can short-circuit
+        # pagination instead of fetching all matching IDs first.
+        _MAX_OR_IDS = 200
+        doc_ids = _query_paperless_api(
+            tags=tags,
+            correspondent=correspondent,
+            created_year=created_year,
+            document_type=document_type,
+            max_ids=_MAX_OR_IDS,
+        )
+        if doc_ids is not None:
+            if not doc_ids:
+                # Paperless returned 0 matches → short-circuit
+                return {"paperless_doc_id": "__NO_MATCH__"}
+            # Fall back to legacy metadata filters when the set is
+            # too large for a single $or clause.
+            if len(doc_ids) > _MAX_OR_IDS:
+                logger.info(
+                    "Paperless pre-filter matched %d docs (> %d); "
+                    "falling back to metadata filters",
+                    len(doc_ids), _MAX_OR_IDS,
+                )
+            elif len(doc_ids) == 1:
+                return {"paperless_doc_id": doc_ids[0]}
+            else:
+                return {"$or": [{"paperless_doc_id": did} for did in doc_ids]}
 
+    # Fallback: basic ChromaDB metadata filter (legacy)
+    conditions: list[dict] = [{"source": "paperless"}]
     if created_year is not None:
         conditions.append({"created_year": created_year})
     if correspondent:
@@ -427,5 +843,249 @@ def _build_chromadb_filters(
     if tags:
         for tag in tags:
             conditions.append({f"ptag_{tag.lower()}": 1})
-
+    if document_type:
+        conditions.append({"document_type_name_lc": document_type.lower()})
     return {"$and": conditions} if len(conditions) > 1 else conditions[0]
+
+
+# ---------------------------------------------------------------------------
+# Paperless API pre-filter
+# ---------------------------------------------------------------------------
+
+# Cache: tag name (lowercase) → tag ID
+_TAG_NAME_TO_ID: dict[str, int] = {}
+# Cache: document type name (lowercase) → type ID
+_DOCTYPE_NAME_TO_ID: dict[str, int] = {}
+# Cache: correspondent name (lowercase) → correspondent ID
+_CORR_NAME_TO_ID: dict[str, int] = {}
+# Track whether each cache was fully populated (all pages fetched)
+_LOOKUP_COMPLETE: dict[str, bool] = {"tags": False, "doctypes": False, "corrs": False}
+# Per-type timestamp of last successful refresh (monotonic seconds)
+_LOOKUP_LAST_REFRESH: dict[str, float] = {"tags": 0.0, "doctypes": 0.0, "corrs": 0.0}
+# Auto-refresh interval in seconds (covers renames in Paperless)
+_LOOKUP_TTL: float = 300.0
+
+
+def _ensure_paperless_lookups(
+    force_refresh: bool = False,
+    *,
+    need_tags: bool = False,
+    need_doctypes: bool = False,
+    need_corrs: bool = False,
+) -> None:
+    """Lazily fetch and cache required Paperless lookups only.
+
+    Avoids fetching unrelated lookup tables (which can add tens of seconds
+    of latency during API outages) when only one filter type is needed.
+    """
+    import requests
+    import time
+
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+    # Per-type auto-refresh when cache is older than _LOOKUP_TTL so that
+    # renamed tags/correspondents/document types don't stay stale.
+    now = time.monotonic()
+    if need_tags and (force_refresh or (
+        _LOOKUP_LAST_REFRESH["tags"] > 0
+        and (now - _LOOKUP_LAST_REFRESH["tags"]) >= _LOOKUP_TTL
+    )):
+        _TAG_NAME_TO_ID.clear()
+        _LOOKUP_COMPLETE["tags"] = False
+    if need_doctypes and (force_refresh or (
+        _LOOKUP_LAST_REFRESH["doctypes"] > 0
+        and (now - _LOOKUP_LAST_REFRESH["doctypes"]) >= _LOOKUP_TTL
+    )):
+        _DOCTYPE_NAME_TO_ID.clear()
+        _LOOKUP_COMPLETE["doctypes"] = False
+    if need_corrs and (force_refresh or (
+        _LOOKUP_LAST_REFRESH["corrs"] > 0
+        and (now - _LOOKUP_LAST_REFRESH["corrs"]) >= _LOOKUP_TTL
+    )):
+        _CORR_NAME_TO_ID.clear()
+        _LOOKUP_COMPLETE["corrs"] = False
+
+    if need_tags and not _LOOKUP_COMPLETE["tags"]:
+        _TAG_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["tags"] = 0.0
+        try:
+            url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
+            params: Optional[dict] = {"page_size": 500}
+            complete = True
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    complete = False
+                    break
+                data = resp.json()
+                for t in data.get("results", []):
+                    name = str(t.get("name", "")).strip()
+                    if name:
+                        _TAG_NAME_TO_ID[name.lower()] = t["id"]
+                url = data.get("next")
+                params = None
+            _LOOKUP_COMPLETE["tags"] = complete
+        except Exception:
+            _LOOKUP_COMPLETE["tags"] = False
+
+    if need_doctypes and not _LOOKUP_COMPLETE["doctypes"]:
+        _DOCTYPE_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["doctypes"] = 0.0
+        try:
+            url = f"{PAPERLESS_URL}/api/document_types/"
+            params = {"page_size": 500}
+            complete = True
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    complete = False
+                    break
+                data = resp.json()
+                for dt in data.get("results", []):
+                    name = str(dt.get("name", "")).strip()
+                    if name:
+                        _DOCTYPE_NAME_TO_ID[name.lower()] = dt["id"]
+                url = data.get("next")
+                params = None
+            _LOOKUP_COMPLETE["doctypes"] = complete
+        except Exception:
+            _LOOKUP_COMPLETE["doctypes"] = False
+
+    if need_corrs and not _LOOKUP_COMPLETE["corrs"]:
+        _CORR_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["corrs"] = 0.0
+        try:
+            url = f"{PAPERLESS_URL}/api/correspondents/"
+            params = {"page_size": 500}
+            complete = True
+            while url:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                if not resp.ok:
+                    complete = False
+                    break
+                data = resp.json()
+                for c in data.get("results", []):
+                    name = str(c.get("name", "")).strip()
+                    if name:
+                        _CORR_NAME_TO_ID[name.lower()] = c["id"]
+                url = data.get("next")
+                params = None
+            _LOOKUP_COMPLETE["corrs"] = complete
+        except Exception:
+            _LOOKUP_COMPLETE["corrs"] = False
+
+    # Record per-type refresh timestamps for completed caches
+    refresh_now = time.monotonic()
+    if need_tags and _LOOKUP_COMPLETE["tags"]:
+        _LOOKUP_LAST_REFRESH["tags"] = refresh_now
+    if need_doctypes and _LOOKUP_COMPLETE["doctypes"]:
+        _LOOKUP_LAST_REFRESH["doctypes"] = refresh_now
+    if need_corrs and _LOOKUP_COMPLETE["corrs"]:
+        _LOOKUP_LAST_REFRESH["corrs"] = refresh_now
+
+
+def _query_paperless_api(
+    tags: Optional[list[str]] = None,
+    correspondent: Optional[str] = None,
+    created_year: Optional[int] = None,
+    document_type: Optional[str] = None,
+    max_ids: int = 0,
+) -> Optional[list[str]]:
+    """Query the Paperless REST API and return matching document IDs.
+
+    Returns None on API failure (caller should fall back to ChromaDB
+    metadata).  Returns an empty list when the query matched zero
+    documents.  When *max_ids* > 0, pagination is aborted early once
+    the threshold is exceeded (the returned list will contain more than
+    *max_ids* entries so the caller knows the cap was hit).
+    """
+    import requests
+
+    _ensure_paperless_lookups(
+        need_tags=bool(tags),
+        need_doctypes=bool(document_type),
+        need_corrs=bool(correspondent),
+    )
+
+    headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+    params: dict = {"page_size": 500, "fields": "id"}
+
+    # Resolve tag names → IDs
+    if tags:
+        tag_ids = []
+        for tag_name in tags:
+            tid = _TAG_NAME_TO_ID.get(tag_name.lower())
+            if tid is None:
+                _ensure_paperless_lookups(force_refresh=True, need_tags=True)
+                tid = _TAG_NAME_TO_ID.get(tag_name.lower())
+                if tid is None:
+                    if not _LOOKUP_COMPLETE["tags"]:
+                        logger.warning("Paperless tag lookup incomplete; falling back to metadata filters")
+                        return None
+                    logger.warning("Paperless tag '%s' not found", tag_name)
+                    return []  # unknown tag → 0 matches
+            tag_ids.append(str(tid))
+        params["tags__id__all"] = ",".join(tag_ids)
+
+    # Resolve document type name → ID
+    if document_type:
+        dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
+        if dtid is None:
+            _ensure_paperless_lookups(force_refresh=True, need_doctypes=True)
+            dtid = _DOCTYPE_NAME_TO_ID.get(document_type.lower())
+            if dtid is None:
+                if not _LOOKUP_COMPLETE["doctypes"]:
+                    logger.warning("Paperless doctype lookup incomplete; falling back to metadata filters")
+                    return None
+                logger.warning("Paperless document type '%s' not found", document_type)
+                return []
+        params["document_type__id__in"] = str(dtid)
+
+    # Resolve correspondent name → ID
+    if correspondent:
+        cid = _CORR_NAME_TO_ID.get(correspondent.lower())
+        if cid is None:
+            _ensure_paperless_lookups(force_refresh=True, need_corrs=True)
+            cid = _CORR_NAME_TO_ID.get(correspondent.lower())
+            if cid is None:
+                if not _LOOKUP_COMPLETE["corrs"]:
+                    logger.warning("Paperless correspondent lookup incomplete; falling back to metadata filters")
+                    return None
+                logger.warning("Paperless correspondent '%s' not found", correspondent)
+                return []
+        params["correspondent__id"] = str(cid)
+
+    # Date range filter
+    if created_year:
+        params["query"] = f"created:[{created_year}-01-01 TO {created_year}-12-31]"
+
+    try:
+        all_ids: list[str] = []
+        url: Optional[str] = f"{PAPERLESS_URL}/api/documents/"
+        page_params: Optional[dict] = params
+        while url:
+            resp = requests.get(url, params=page_params, headers=headers, timeout=15)
+            if not resp.ok:
+                logger.error("Paperless API returned %d", resp.status_code)
+                return None
+            data = resp.json()
+            for doc in data.get("results", []):
+                all_ids.append(str(doc["id"]))
+            # Short-circuit when we already exceed the caller's cap —
+            # no need to paginate through thousands of IDs.
+            if max_ids and len(all_ids) > max_ids:
+                logger.info(
+                    "Paperless pre-filter exceeded %d IDs, stopping early",
+                    max_ids,
+                )
+                return all_ids
+            url = data.get("next")
+            page_params = None  # next URL already contains params
+        logger.info(
+            "Paperless pre-filter: %d docs (tags=%s type=%s year=%s)",
+            len(all_ids), tags, document_type, created_year,
+        )
+        return all_ids
+    except Exception as e:
+        logger.error("Paperless API query failed: %s", e)
+        return None

@@ -47,7 +47,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def require_auth(
-    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
 ) -> None:
     """Protect data-bearing endpoints when running outside a trusted local setup."""
     if not AUTH_REQUIRED:
@@ -75,9 +75,11 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     expand_links: bool = True
     min_score: float = 0.0  # filter results below this threshold
+    sort_by_date: bool = False  # sort results newest-first instead of by score
     paperless_tags: Optional[list[str]] = None
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
+    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
 
 
 class SearchResult(BaseModel):
@@ -88,6 +90,7 @@ class SearchResult(BaseModel):
     match_type: str = ""
     source: str = "obsidian"  # "obsidian" | "paperless"
     source_url: str = ""  # direct link to the document; empty when no public URL is configured
+    created: str = ""  # ISO date from Paperless; empty for Obsidian notes
 
 
 class SearchResponse(BaseModel):
@@ -193,6 +196,8 @@ def stats(_: None = Security(require_auth)):
         "`match_type` values: `semantic` | `link_1` | `backlink` | `tag` | `link_2`\n\n"
         "**Paperless filters:** pass `paperless_tags`, `paperless_correspondent`, or "
         "`paperless_created_year` to filter by metadata stored in ChromaDB before semantic ranking.\n\n"
+        "**`sort_by_date`:** when true, results are sorted newest-first by creation date "
+        "instead of by score. Useful for queries like 'letzte Rechnung'.\n\n"
         "**Use for:** conceptual questions, topics, explanations.\n\n"
         "**Do NOT use for:** abbreviations, URLs, exact class/enum names \u2192 use `/keyword-search`.\n\n"
         "Set `min_score: 0.70` to suppress low-confidence results."
@@ -205,9 +210,10 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
+        sort_by_date=req.sort_by_date,
+        min_score=req.min_score,
     )
-    if req.min_score > 0:
-        results = [r for r in results if r["score"] >= req.min_score]
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 
@@ -217,7 +223,8 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
     response_model=SearchResponse,
     summary="Keyword search",
     description=(
-        "Case-insensitive exact-text search across filenames and note content.\n\n"
+        "Case-insensitive text search across filenames and note content.\n\n"
+        "**Multi-word queries** use AND logic: every word must appear in the document.\n\n"
         "**Use for:** abbreviations (`VPN`, `NVR`, `PoE`), hostnames (`homeassistant`, `pihole`), "
         "IP addresses, port numbers, model names (`USG-3P`), version strings (`v3.2.1`), "
         "config keys (`VAULT_PATH`), class names, enum values, "
@@ -232,6 +239,35 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
+    )
+    results = [_enrich_source_url(r) for r in results]
+    return SearchResponse(results=results, count=len(results))
+
+
+@app.post(
+    "/hybrid-search",
+    response_model=SearchResponse,
+    summary="Hybrid search (semantic + keyword)",
+    description=(
+        "Runs both semantic and keyword search, merges results and deduplicates.\n\n"
+        "Best for natural-language queries that contain specific identifiers, "
+        "e.g. 'Kaufvertrag Grundstück Montabaur' or 'Rechnung Audi e-tron 2025'.\n\n"
+        "Results are ranked by score (highest first) unless `sort_by_date: true` is set.\n\n"
+        "Supports all Paperless filters and `min_score` threshold."
+    ),
+)
+def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
+    """Combined semantic + keyword search with deduplication."""
+    results = searcher.hybrid_search(
+        req.query, req.top_k,
+        expand_links=req.expand_links,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
+        sort_by_date=req.sort_by_date,
+        min_score=req.min_score,
     )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
@@ -272,13 +308,45 @@ def post_note(req: NoteRequest, _: None = Security(require_auth)):
 def reindex(_: None = Security(require_auth)):
     """Re-scans the vault and Paperless archive (if configured) and updates changed files."""
     global indexing_status
-    indexing_status = {"indexing": True, "indexed_files": 0, "total_files": 0}
+    indexing_status = {
+        "indexing": True,
+        "indexed_files": 0,
+        "total_files": 0,
+        "obsidian_indexed": 0,
+        "obsidian_total": 0,
+        "paperless_indexed": 0,
+        "paperless_total": 0,
+    }
     count = 0
     if DATA_SOURCES in ("obsidian", "all"):
+        indexing_status["obsidian_total"] = sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        )
         count += indexer.full_reindex()
+        indexing_status["obsidian_indexed"] = indexing_status["obsidian_total"]
     if DATA_SOURCES in ("paperless", "all"):
+        indexing_status["paperless_total"] = sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        )
         count += indexer.full_reindex(source="paperless")
-    indexing_status = {"indexing": False, "indexed_files": len(indexer._file_hashes), "total_files": len(indexer._file_hashes)}
+        indexing_status["paperless_indexed"] = indexing_status["paperless_total"]
+    indexing_status = {
+        "indexing": False,
+        "indexed_files": len(indexer._file_hashes),
+        "total_files": len(indexer._file_hashes),
+        "obsidian_indexed": sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        ),
+        "obsidian_total": sum(
+            1 for source in indexer._file_sources.values() if source == "obsidian"
+        ),
+        "paperless_indexed": sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        ),
+        "paperless_total": sum(
+            1 for source in indexer._file_sources.values() if source == "paperless"
+        ),
+    }
     return ReindexResponse(updated_files=count, message=f"Reindexed {count} files")
 
 
