@@ -264,8 +264,13 @@ class Searcher:
             min_score=0.0,
         )
 
-        # Build a keyword query from content words only
-        raw_words = re.findall(r"[a-zäöüß\d]+(?:[-][a-zäöüß\d]+)*", query.lower())
+        # Build a keyword query from content words only.
+        # Strip leading/trailing punctuation but keep internal delimiters
+        # (hyphens, underscores, slashes, dots) so IDs like AB-1234 or
+        # INV/2025-03 stay intact.
+        _PUNCT = "?!.,;:\"'()[]{}«»"
+        raw_words = [w.strip(_PUNCT) for w in query.lower().split()]
+        raw_words = [w for w in raw_words if w]
         content_words = [
             w for w in raw_words
             if w not in self._STOP_WORDS and len(w) > 1
