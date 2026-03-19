@@ -1,3 +1,10 @@
+## [1.11.2](https://github.com/duongel/rag-api/compare/v1.11.1...v1.11.2) (2026-03-19)
+
+
+### Bug Fixes
+
+* **start:** freeze per-source elapsed timer in progress bars ([ffdc028](https://github.com/duongel/rag-api/commit/ffdc0283ae3f1a06744b944b4efc6c0ae01279d5))
+
 ## [1.11.1](https://github.com/duongel/rag-api/compare/v1.11.0...v1.11.1) (2026-03-19)
 
 
