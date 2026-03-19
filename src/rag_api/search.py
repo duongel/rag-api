@@ -881,6 +881,23 @@ _LOOKUP_LAST_REFRESH: dict[str, float] = {"tags": 0.0, "doctypes": 0.0, "corrs":
 _LOOKUP_TTL: float = 300.0
 
 
+def get_paperless_filters() -> dict:
+    """Return all cached Paperless tags, document types, and correspondents.
+
+    Triggers a lazy fetch if the caches are empty.
+    """
+    _ensure_paperless_lookups(need_tags=True, need_doctypes=True, need_corrs=True)
+    # Return the original-case names.  The caches store lowercase keys;
+    # we title-case correspondents/doctypes but keep tags lowercase
+    # because Paperless tags are case-insensitive and users pass them
+    # lowercase in filter queries.
+    return {
+        "tags": sorted(_TAG_NAME_TO_ID.keys()),
+        "document_types": sorted(_DOCTYPE_NAME_TO_ID.keys()),
+        "correspondents": sorted(_CORR_NAME_TO_ID.keys()),
+    }
+
+
 def _ensure_paperless_lookups(
     force_refresh: bool = False,
     *,

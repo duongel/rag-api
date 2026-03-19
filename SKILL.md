@@ -46,12 +46,13 @@ Goal: no MCP, no extra services, minimal context. Agents should prefer calling t
 
 ### Minimal Tool Set
 
-For most agents, these three operations are sufficient:
+For most agents, these operations are sufficient:
 
 1. `search_notes`
 2. `hybrid_search_notes`
 3. `keyword_search_notes`
 4. `get_note`
+5. `get_filters` — list available Paperless tags, document types, and correspondents
 
 `reindex` is optional and mainly useful for admin/maintenance tasks.
 
@@ -149,6 +150,7 @@ Recommended HTTP mapping:
 | `hybrid_search_notes` | `POST /hybrid-search` |
 | `keyword_search_notes` | `POST /keyword-search` |
 | `get_note` | `GET /note?path=...` or `POST /note` |
+| `get_filters` | `GET /filters` |
 
 Every mapping above also requires `Authorization: Bearer <API_BEARER_TOKEN>`.
 
@@ -359,6 +361,7 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
 
 ### Recommended Agent Behavior
 
+- Call `get_filters` (`GET /filters`) at the start of a session to discover available tags, document types, and correspondents.
 - For Paperless-related queries, always set the strongest available `paperless_*` filters first, then run search only on that filtered result set.
 - Use `keyword_search_notes` first for abbreviations, URLs, hostnames, model numbers, code symbols, and exact identifiers.
 - Use `hybrid_search_notes` as the default for natural-language queries that also contain concrete business terms, names, or likely exact identifiers.
@@ -552,14 +555,32 @@ curl -s http://127.0.0.1:8484/note \
   -d '{"path": "Home/Heating/Heatpump.md"}'
 ```
 
-### 5. Trigger Reindex
+### 5. Available Filters
+
+Returns all known Paperless tags, document types, and correspondents. Call this once at the start of a session to discover which filter values are available for `paperless_tags`, `paperless_document_type`, and `paperless_correspondent`.
+
+```bash
+curl -s http://127.0.0.1:8484/filters \
+  -H "Authorization: Bearer $API_BEARER_TOKEN"
+```
+
+**Response:**
+```json
+{
+  "tags": ["auto", "banking", "duong", "etron", "golf7", "lina", "rechnung"],
+  "document_types": ["bescheinigung", "rechnung", "vertrag"],
+  "correspondents": ["dkb", "ing diba", "telekom"]
+}
+```
+
+### 6. Trigger Reindex
 
 ```bash
 curl -s -X POST http://127.0.0.1:8484/reindex \
   -H "Authorization: Bearer $API_BEARER_TOKEN"
 ```
 
-### 6. Indexing Status
+### 7. Indexing Status
 
 ```bash
 curl -s http://127.0.0.1:8484/status \
@@ -567,7 +588,7 @@ curl -s http://127.0.0.1:8484/status \
 # → {"indexing": false, "indexed_files": 95}
 ```
 
-### 7. Statistics
+### 8. Statistics
 
 ```bash
 curl -s http://127.0.0.1:8484/stats \
@@ -575,7 +596,7 @@ curl -s http://127.0.0.1:8484/stats \
 # → {"total_chunks": 187, "total_files": 95, "link_graph_edges": 42}
 ```
 
-### 8. Health Check
+### 9. Health Check
 
 ```bash
 curl -s http://127.0.0.1:8484/health

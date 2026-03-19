@@ -304,6 +304,21 @@ def post_note(req: NoteRequest, _: None = Security(require_auth)):
     return result
 
 
+@app.get(
+    "/filters",
+    summary="Available Paperless filter values",
+    description=(
+        "Returns all known Paperless tags, document types, and correspondents. "
+        "Use these values in `paperless_tags`, `paperless_document_type`, and "
+        "`paperless_correspondent` filter fields when searching."
+    ),
+)
+def filters(_: None = Security(require_auth)):
+    """List available Paperless tags, document types, and correspondents."""
+    from .search import get_paperless_filters
+    return get_paperless_filters()
+
+
 @app.post("/reindex", response_model=ReindexResponse, summary="Trigger full reindex")
 def reindex(_: None = Security(require_auth)):
     """Re-scans the vault and Paperless archive (if configured) and updates changed files."""
