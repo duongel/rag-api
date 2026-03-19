@@ -576,6 +576,8 @@ done
 _INDEX_START=$SECONDS
 _PROGRESS_LINES=0
 INDEXED=0
+_OBS_DONE_ELAPSED=""
+_PAP_START_ELAPSED=""
 while true; do
   _elapsed=$(( SECONDS - _INDEX_START ))
   STATUS=$(_api_get /status 2>/dev/null || echo "{}")
@@ -593,12 +595,29 @@ while true; do
     OBS_TOT=$(_json_int "$STATUS" "obsidian_total")
     PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")
     PAP_TOT=$(_json_int "$STATUS" "paperless_total")
+
+    # Freeze Obsidian elapsed time once it reaches 100%
+    if [[ $OBS_TOT -gt 0 && $OBS_IDX -ge $OBS_TOT && -z "$_OBS_DONE_ELAPSED" ]]; then
+      _OBS_DONE_ELAPSED=$_elapsed
+    fi
+    _obs_elapsed=${_OBS_DONE_ELAPSED:-$_elapsed}
+
+    # Track Paperless elapsed time from when it actually starts
+    if [[ $PAP_TOT -gt 0 && -z "$_PAP_START_ELAPSED" ]]; then
+      _PAP_START_ELAPSED=$_elapsed
+    fi
+    if [[ -n "$_PAP_START_ELAPSED" ]]; then
+      _pap_elapsed=$(( _elapsed - _PAP_START_ELAPSED ))
+    else
+      _pap_elapsed=0
+    fi
+
     # Use the larger total so both bars share the same field widths.
     _max_tot=$(( OBS_TOT > PAP_TOT ? OBS_TOT : PAP_TOT ))
     [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA' "$_PROGRESS_LINES"
     _PROGRESS_LINES=1
-    printf '\r\033[K'; _progress_bar "Obsidian" "$OBS_IDX" "$OBS_TOT" "$_elapsed" "$_max_tot"; printf '\n'
-    printf '\r\033[K'; _progress_bar "Paperless" "$PAP_IDX" "$PAP_TOT" "$_elapsed" "$_max_tot"
+    printf '\r\033[K'; _progress_bar "Obsidian" "$OBS_IDX" "$OBS_TOT" "$_obs_elapsed" "$_max_tot"; printf '\n'
+    printf '\r\033[K'; _progress_bar "Paperless" "$PAP_IDX" "$PAP_TOT" "$_pap_elapsed" "$_max_tot"
   else
     _PROGRESS_LINES=1
     _draw_progress "Indexing" "$INDEXED" "$TOTAL" "$_elapsed"
