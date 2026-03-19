@@ -690,6 +690,25 @@ class TestSpecificTermPenalty:
         # Should still get synonym boost
         assert results[0]["score"] >= 0.80
 
+    def test_no_penalty_for_empty_content_filename_hits(self):
+        """Filename hits with empty content should not be penalized."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = []
+        kw_results = [
+            {"file_path": "VW-Golf-Rechnung.pdf", "section": "", "score": 1.0,
+             "source": "paperless", "match_type": "filename", "content": ""},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=kw_results):
+            results = searcher.hybrid_search("VW Golf Rechnung", top_k=5)
+
+        # Filename hit with empty content must not receive the -0.20 penalty
+        assert results[0]["score"] >= 1.0
+
 
 class TestMultiWordDocumentScope:
     """Multi-word AND should match across chunks of the same document."""

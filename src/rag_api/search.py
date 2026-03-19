@@ -332,7 +332,9 @@ class Searcher:
                 r = dict(r)
 
                 # Penalty for missing specific terms (proper nouns, IDs …)
-                if specific_terms:
+                # Skip penalty for filename hits with empty content — they
+                # matched by name and should not be demoted.
+                if specific_terms and doc_lower:
                     specific_cov = sum(1 for t in specific_terms if t in doc_lower) / len(specific_terms)
                     if specific_cov < 1.0:
                         r["score"] = round(r["score"] - (1 - specific_cov) * 0.20, 4)
