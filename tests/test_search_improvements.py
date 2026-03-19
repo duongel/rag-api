@@ -440,6 +440,64 @@ class TestHybridSearch:
         # Exact term match should be boosted (or at least never reduced)
         assert results[0]["score"] >= 0.90
 
+    def test_hybrid_cost_queries_promote_insurance_invoice_above_mileage_note(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {
+                "file_path": "mileage.pdf",
+                "section": "",
+                "score": 0.7922,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Kilometerstand\n"
+                    "Tags: auto, golf7, versicherung\n\n"
+                    "Der Kilometerstand betraegt 39.320 km.\n"
+                    "Die Jahresfahrleistung meines Pkw betraegt in 2025 voraussichtlich 6.000 km."
+                ),
+            },
+            {
+                "file_path": "insurance.pdf",
+                "section": "",
+                "score": 0.7757,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Kfz Versicherung\n"
+                    "Tags: auto, golf7, versicherung\n"
+                    "Document Type: Rechnung\n\n"
+                    "Rechnung zu Ihrer Kfz-Versicherung.\n"
+                    "Gesamtbeitrag 304,20 EUR."
+                ),
+            },
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search(
+                "wie viel habe ich insgesamt fuer den vw golf in 2025 ausgegeben",
+                top_k=5,
+            )
+
+        assert results[0]["file_path"] == "insurance.pdf"
+        assert results[0]["score"] > results[1]["score"]
+
+    def test_hybrid_keeps_expense_verbs_in_keyword_query(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        with patch.object(searcher, "semantic_search", return_value=[]), \
+             patch.object(searcher, "keyword_search", return_value=[]) as mock_keyword:
+            searcher.hybrid_search("was hat es gekostet", top_k=5)
+
+        assert mock_keyword.call_args.args[0] == "gekostet"
+
     def test_hybrid_respects_sort_by_date(self):
         from rag_api.search import Searcher
 
