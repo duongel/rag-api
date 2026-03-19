@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/duongel/rag-api/compare/v1.10.3...v1.11.0) (2026-03-19)
+
+
+### Features
+
+* **start:** Docker-style full-width progress bars with elapsed time ([5177f2c](https://github.com/duongel/rag-api/commit/5177f2cb499add7ed3898087a32b3e0f2d84a15c))
+
 ## [1.10.3](https://github.com/duongel/rag-api/compare/v1.10.2...v1.10.3) (2026-03-19)
 
 
