@@ -12,7 +12,7 @@ def test_paperless_source_url_points_to_document_view(monkeypatch):
         }
     )
 
-    assert result["source_url"] == "https://paperless.example.com/documents/42/document"
+    assert result["source_url"] == "https://paperless.example.com/api/documents/42/preview/"
 
 
 def test_paperless_source_url_uses_numeric_stem_fallback(monkeypatch):
@@ -25,4 +25,4 @@ def test_paperless_source_url_uses_numeric_stem_fallback(monkeypatch):
         }
     )
 
-    assert result["source_url"] == "https://paperless.example.com/documents/77/document"
+    assert result["source_url"] == "https://paperless.example.com/api/documents/77/preview/"

@@ -145,7 +145,7 @@ def _enrich_source_url(result: dict) -> dict:
                 doc_id = stem
         if doc_id:
             result["source_url"] = (
-                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/documents/{int(doc_id)}/document"
+                f"{PAPERLESS_PUBLIC_URL.rstrip('/')}/api/documents/{int(doc_id)}/preview/"
             )
     elif source == "obsidian":
         result["source_url"] = (
