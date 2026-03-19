@@ -1,3 +1,42 @@
+# [1.10.0](https://github.com/duongel/rag-api/compare/v1.9.3...v1.10.0) (2026-03-19)
+
+
+### Bug Fixes
+
+* preserve date-sorted candidates and defer hybrid min_score ([057b6a8](https://github.com/duongel/rag-api/commit/057b6a8cbe968f2eeea8f469d8568984c0ab2ad3))
+* **search:** adaptive dedup fetch & cap Paperless $or filters ([005fa9d](https://github.com/duongel/rag-api/commit/005fa9d727d84e204dd87fa61f1ea4a85b845552))
+* **search:** address PR review comments ([154724e](https://github.com/duongel/rag-api/commit/154724edc9458b85297f48a393b5a86bd1e49c61))
+* **search:** apply min_score consistently, remove dead code, reset TTL on failure ([adfc7e8](https://github.com/duongel/rag-api/commit/adfc7e89e01a56379e542c715165b20513375c74))
+* **search:** break adaptive fetch loop when filtered hits exhausted ([130976f](https://github.com/duongel/rag-api/commit/130976fe5e8ce26f7ab92bc988cb488b1f12c037))
+* **search:** dedup semantic hits per document ([e780547](https://github.com/duongel/rag-api/commit/e7805472f614533da8cda351320249f08420f52b))
+* **search:** dedupe paperless hits and boost synonyms without penalties ([98ce16d](https://github.com/duongel/rag-api/commit/98ce16ddd181b67e130ed911e6962a7856338252))
+* **search:** fetch wider candidate pool before dedup, use candidate_k in hybrid ([32e18ae](https://github.com/duongel/rag-api/commit/32e18ae35e1139442c44f507622a81f72b1e309e))
+* **search:** forward min_score and widen candidate pools in hybrid date mode ([555c901](https://github.com/duongel/rag-api/commit/555c901b1e849e10a99af216c7bdfc37a3aa7fd8))
+* **search:** handle incomplete lookup caches, scope date backfill by source ([b7359f2](https://github.com/duongel/rag-api/commit/b7359f20d2bd7c91045b5238dcb210d1aab3af9a))
+* **search:** harden filtered search and update skill ([6400e08](https://github.com/duongel/rag-api/commit/6400e08d465889ca661ae8f850d500bfe8b691a2))
+* **search:** honor hybrid sort and link options ([1ba8177](https://github.com/duongel/rag-api/commit/1ba8177fb6572c2ebbec568a831cba968be77496))
+* **search:** hybrid dedup keeps best chunk, coverage re-ranking ([50947c3](https://github.com/duongel/rag-api/commit/50947c3e44364550fa111c58bf724adf69c17004))
+* **search:** keep keyword dates and refresh lookups ([b0ff018](https://github.com/duongel/rag-api/commit/b0ff0187c83f3b7e0ae426b240ca41fbba5c2da5))
+* **search:** limit graph expansion seeds to top_k best hits ([7116b03](https://github.com/duongel/rag-api/commit/7116b03b270638145ec5ae8519dc22a2ca9f61ae))
+* **search:** limit paperless lookup prefetch to needed filters ([a758e53](https://github.com/duongel/rag-api/commit/a758e53413873300062b49d75ea418afe751ee18))
+* **search:** per-type TTL for Paperless lookup caches and distinct-term proximity bonus ([8c1fa15](https://github.com/duongel/rag-api/commit/8c1fa15bad89377342846f7e0850e492d7d2d1e4))
+* **search:** preserve best chunk when deduplicating Paperless keyword results ([3a08b9a](https://github.com/duongel/rag-api/commit/3a08b9aa8fdae079b38892fe537e1acef178dbf0))
+* **search:** preserve paperless doc id when deduping filename hits ([598b3af](https://github.com/duongel/rag-api/commit/598b3afa6ff8a7d2ad9f11f7e38a2b0bf796d847))
+* **search:** replace stall-based abort with iteration cap ([5f76df9](https://github.com/duongel/rag-api/commit/5f76df9de3cbf74629286fa1ea5d974d838b8c97))
+* **search:** retry incomplete Paperless lookup caches on subsequent calls ([8abe823](https://github.com/duongel/rag-api/commit/8abe8231874ced5c03baa5bf22e2095cf0feb95a))
+* **search:** short-circuit Paperless ID pagination at max_ids cap ([9573a10](https://github.com/duongel/rag-api/commit/9573a10f36ac8db7d7838e01e5333cb825a2a956))
+* **search:** skip refetch when lookup cache is complete but empty ([635deb3](https://github.com/duongel/rag-api/commit/635deb3ea1d5aa4ec3e0c2047104858fd9736e03))
+* **search:** stabilize paperless indexing ([6930f70](https://github.com/duongel/rag-api/commit/6930f708878f9c69eadee2a2a9d128a919b2799f))
+* **search:** TTL-based cache refresh & all-positions proximity ([c9d2bca](https://github.com/duongel/rag-api/commit/c9d2bcaa2444b8925f7d1350e796451caf3a28a5))
+* **search:** unify adaptive dedup loop for both date and non-date paths ([888f566](https://github.com/duongel/rag-api/commit/888f566f717445bc96d6f855fd1acd79ea65a51c))
+
+
+### Features
+
+* **search:** hybrid stop-word filter, cross-method bonus, strict tests ([40332fc](https://github.com/duongel/rag-api/commit/40332fc511cc5a6d5e5d48e87d7fcb19080be02d))
+* **search:** multi-word keyword AND, hybrid search, date sorting ([92b442f](https://github.com/duongel/rag-api/commit/92b442ffc0dc8b94419c128cda86a1bbf04a9f61))
+* **search:** Paperless API pre-filter with document_type support ([9a0dc33](https://github.com/duongel/rag-api/commit/9a0dc333911f8ab14ec9c938f61dd9bcf678053c))
+
 ## [1.9.3](https://github.com/duongel/rag-api/compare/v1.9.2...v1.9.3) (2026-03-18)
 
 
