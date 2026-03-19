@@ -522,8 +522,17 @@ trap _on_interrupt INT
 
 echo -e "${YELLOW}⏳ Waiting for indexing...${NC} ${BOLD}(Ctrl+C to skip)${NC}"
 
+_HEALTH_TIMEOUT=300  # seconds to wait for API to become healthy
+_HEALTH_START=$SECONDS
 until _api_get /health > /dev/null 2>&1; do
-  printf '\r\033[K   Starting API...'
+  _elapsed=$(( SECONDS - _HEALTH_START ))
+  printf '\r\033[K   Starting API... (%ds)' "$_elapsed"
+  if [[ $_elapsed -ge $_HEALTH_TIMEOUT ]]; then
+    echo ""
+    echo -e "${RED}❌ API did not become healthy within ${_HEALTH_TIMEOUT}s.${NC}"
+    echo -e "   Check logs: ${BOLD}docker compose logs ${_DEFAULT_RAG_API_SERVICE}${NC}"
+    exit 1
+  fi
   sleep 2
 done
 
@@ -553,6 +562,7 @@ while true; do
     _PROGRESS_LINES=1
     _draw_bar "$INDEXED" "$TOTAL"
   fi
+
   sleep 2
 done
 
