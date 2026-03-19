@@ -265,7 +265,7 @@ class Searcher:
         )
 
         # Build a keyword query from content words only
-        raw_words = re.findall(r"[a-zäöüß\d]+", query.lower())
+        raw_words = re.findall(r"[a-zäöüß\d]+(?:[-][a-zäöüß\d]+)*", query.lower())
         content_words = [
             w for w in raw_words
             if w not in self._STOP_WORDS and len(w) > 1
