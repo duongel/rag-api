@@ -1,3 +1,10 @@
+## [1.10.3](https://github.com/duongel/rag-api/compare/v1.10.2...v1.10.3) (2026-03-19)
+
+
+### Bug Fixes
+
+* **start:** add timeouts for health check and indexing wait loops ([40a075a](https://github.com/duongel/rag-api/commit/40a075ad0af72b1f1670676094b10f3516fe3b3b))
+
 ## [1.10.2](https://github.com/duongel/rag-api/compare/v1.10.1...v1.10.2) (2026-03-19)
 
 
