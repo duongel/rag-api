@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/duongel/rag-api/compare/v1.10.0...v1.10.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* **api:** use Paperless preview URL for source_url ([8519dc5](https://github.com/duongel/rag-api/commit/8519dc5fd5a9dbf323129df089929c7ff9ff3dc0))
+
 # [1.10.0](https://github.com/duongel/rag-api/compare/v1.9.3...v1.10.0) (2026-03-19)
 
 
