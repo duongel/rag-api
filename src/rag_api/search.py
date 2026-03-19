@@ -311,8 +311,11 @@ class Searcher:
             seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
 
         # ── Keyword/synonym re-rank ──
-        # Exact content words should never be penalized because a synonym is
-        # missing. Instead, exact and synonym hits provide additive boosts.
+        # Separate terms into "specific" (no synonym expansions — proper
+        # nouns, IDs, years) and "generic" (have expansions like "kosten").
+        # Documents missing specific terms are penalized so that e.g. a
+        # query "VW Golf Kosten 2025" demotes bank statements that match
+        # "Kosten 2025" but not "VW Golf".
         exact_terms = set(content_words)
         expansion_seed_words = {
             w for w in content_words if w in self._QUERY_EXPANSIONS
@@ -321,11 +324,25 @@ class Searcher:
         for w in expansion_seed_words:
             synonym_terms.update(self._QUERY_EXPANSIONS.get(w, []))
         synonym_terms -= exact_terms
+        specific_terms = exact_terms - expansion_seed_words
 
         if exact_terms or synonym_terms:
             for key, r in seen.items():
                 doc_lower = r.get("content", "").lower()
+                # Include file_path in coverage so filename matches
+                # (e.g. "VW-Golf-Rechnung.pdf") count towards term coverage
+                # even when the content snippet lacks those terms.
+                fp_lower = r.get("file_path", "").lower()
+                searchable = f"{fp_lower} {doc_lower}"
                 r = dict(r)
+
+                # Penalty for missing specific terms (proper nouns, IDs …)
+                # Skip penalty for results with no content and no useful
+                # file path (pure empty hits).
+                if specific_terms and searchable.strip():
+                    specific_cov = sum(1 for t in specific_terms if t in searchable) / len(specific_terms)
+                    if specific_cov < 1.0:
+                        r["score"] = round(r["score"] - (1 - specific_cov) * 0.20, 4)
 
                 exact_cov = 0.0
                 if exact_terms:

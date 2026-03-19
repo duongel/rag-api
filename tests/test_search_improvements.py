@@ -639,6 +639,98 @@ class TestHybridSearch:
         assert filename_results[0].get("created") == "2025-06-15"
 
 
+class TestSpecificTermPenalty:
+    """Specific terms (no synonym expansions) should penalize non-matching docs."""
+
+    def test_specific_terms_demote_irrelevant_semantic_hits(self):
+        """'VW Golf Kosten 2025' should demote bank statements that only match Kosten+2025."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        bank_statement = (
+            "Kontoauszug 2025-05\nKontostand am 04.04.2025\n"
+            "Basislastschrift Kosten -160,00\nZahlungseingang 2.500,00"
+        )
+        golf_doc = (
+            "VW Golf Wartungsrechnung\nKosten fuer Inspektion 2025\n"
+            "Gesamtbetrag 450 EUR"
+        )
+        sem_results = [
+            {"file_path": "bank.pdf", "section": "", "score": 0.81,
+             "source": "paperless", "match_type": "semantic", "content": bank_statement},
+            {"file_path": "golf.pdf", "section": "", "score": 0.75,
+             "source": "paperless", "match_type": "semantic", "content": golf_doc},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("VW Golf Kosten 2025", top_k=5)
+
+        # golf.pdf should rank above bank.pdf because it contains VW + Golf
+        assert results[0]["file_path"] == "golf.pdf"
+
+    def test_no_penalty_when_all_terms_have_expansions(self):
+        """Queries where every word has expansions should not trigger the penalty."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {"file_path": "a.pdf", "section": "", "score": 0.80,
+             "source": "paperless", "match_type": "semantic",
+             "content": "Gesamtbetrag 300 EUR Rechnung"},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("kosten", top_k=5)
+
+        # "kosten" has expansions → no specific terms → no penalty
+        # Should still get synonym boost
+        assert results[0]["score"] >= 0.80
+
+    def test_no_penalty_for_empty_content_filename_hits(self):
+        """Filename hits with empty content should not be penalized."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = []
+        kw_results = [
+            {"file_path": "VW-Golf-Rechnung.pdf", "section": "", "score": 1.0,
+             "source": "paperless", "match_type": "filename", "content": ""},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=kw_results):
+            results = searcher.hybrid_search("VW Golf Rechnung", top_k=5)
+
+        # Filename hit with empty content must not receive the -0.20 penalty
+        # (file_path contains "vw", "golf", "rechnung" → full coverage)
+        assert results[0]["score"] >= 1.0
+
+    def test_filename_terms_count_towards_specific_coverage(self):
+        """Obsidian filename hits with content should use file_path for coverage."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {"file_path": "VW-Golf-Wartung.md", "section": "", "score": 0.80,
+             "source": "obsidian", "match_type": "semantic",
+             "content": "Ölwechsel und Inspektion durchgeführt. Gesamtbetrag 450 EUR."},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("VW Golf Kosten", top_k=5)
+
+        # "vw" and "golf" are in file_path, not in content → should still
+        # count towards specific-term coverage and avoid full penalty
+        assert results[0]["score"] >= 0.75
+
+
 class TestMultiWordDocumentScope:
     """Multi-word AND should match across chunks of the same document."""
 
