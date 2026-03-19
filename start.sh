@@ -81,23 +81,60 @@ _summary() {
   echo -e "   Stop:    ${BOLD}docker compose down${NC}"
 }
 
-_bar_str() {
-  local cur=$1 tot=$2 w=30
-  if [ "$tot" -le 0 ]; then
-    printf '⏳ waiting...'; return
+# Docker-style progress bar: full terminal width, columns perfectly aligned.
+#   _progress_bar LABEL CUR TOTAL ELAPSED_SECONDS [MAX_TOTAL]
+# MAX_TOTAL is optional; when given, the count field width is based on it
+# so that multiple bars align even when their totals differ.
+# Output example (80-col terminal):
+#  Obsidian   [██████████████████░░░░░░░░░░░░]   120/  166   72%   12s
+#  Paperless  [██████░░░░░░░░░░░░░░░░░░░░░░░░]  1240/ 3731   33%   45s
+_progress_bar() {
+  local label=$1 cur=$2 tot=$3 elapsed=$4 max_tot=${5:-$3}
+  local cols=${COLUMNS:-0}
+  [[ $cols -le 0 ]] && cols=$(stty size 2>/dev/null | awk '{print $2}')
+  [[ ${cols:-0} -le 0 ]] && cols=$(tput cols 2>/dev/null || echo 80)
+
+  # Use max_tot to determine fixed field widths so bars stay aligned.
+  local cnt_w=${#max_tot}
+  [[ $cnt_w -lt 1 ]] && cnt_w=1
+
+  # Format the right-hand side with fixed-width fields:
+  #  "  <cur>/<tot>  <pct>%  <elapsed>s"
+  local right
+  if [[ "$tot" -le 0 ]]; then
+    # Pad "waiting..." to same width as a normal right side would be
+    local pad_w=$(( cnt_w * 2 + 1 + 5 + 5 ))
+    right=$(printf "  %${pad_w}s" "waiting...")
+  else
+    local pct=$(( cur * 100 / tot ))
+    right=$(printf '  %*d/%*d  %3d%%  %3ds' "$cnt_w" "$cur" "$cnt_w" "$tot" "$pct" "$elapsed")
   fi
-  local pct=$(( cur * 100 / tot ))
-  local f=$(( cur * w / tot ))
-  local e=$(( w - f ))
-  local bar_f="" bar_e=""
-  [ "$f" -gt 0 ] && bar_f=$(printf '%0.s█' $(seq 1 "$f"))
-  [ "$e" -gt 0 ] && bar_e=$(printf '%0.s░' $(seq 1 "$e"))
-  printf '[%s%s] %d/%d (%d%%)' "$bar_f" "$bar_e" "$cur" "$tot" "$pct"
+
+  # Format the label with fixed padding (11 chars): " Obsidian   " / " Paperless  "
+  local left
+  left=$(printf ' %-10s ' "$label")
+
+  # Bar width = terminal width minus label, brackets, right side, and margin
+  local bar_w=$(( cols - ${#left} - 2 - ${#right} - 1 ))
+  [[ $bar_w -lt 10 ]] && bar_w=10
+
+  local bar_fill="" bar_empty=""
+  if [[ "$tot" -gt 0 ]]; then
+    local f=$(( cur * bar_w / tot ))
+    [[ $f -gt $bar_w ]] && f=$bar_w
+    local e=$(( bar_w - f ))
+    [[ $f -gt 0 ]] && bar_fill=$(printf '%0.s█' $(seq 1 "$f"))
+    [[ $e -gt 0 ]] && bar_empty=$(printf '%0.s░' $(seq 1 "$e"))
+  else
+    bar_empty=$(printf '%0.s░' $(seq 1 "$bar_w"))
+  fi
+
+  printf '%s[%s%s]%s' "$left" "$bar_fill" "$bar_empty" "$right"
 }
 
-_draw_bar() {
-  printf '\r\033[K   '
-  _bar_str "$1" "$2"
+_draw_progress() {
+  printf '\r\033[K'
+  _progress_bar "$@"
 }
 
 _json_int() {
@@ -536,9 +573,11 @@ until _api_get /health > /dev/null 2>&1; do
   sleep 2
 done
 
+_INDEX_START=$SECONDS
 _PROGRESS_LINES=0
 INDEXED=0
 while true; do
+  _elapsed=$(( SECONDS - _INDEX_START ))
   STATUS=$(_api_get /status 2>/dev/null || echo "{}")
   INDEXED=$(_json_int "$STATUS" "indexed_files")
   TOTAL=$(_json_int  "$STATUS" "total_files")
@@ -554,13 +593,15 @@ while true; do
     OBS_TOT=$(_json_int "$STATUS" "obsidian_total")
     PAP_IDX=$(_json_int "$STATUS" "paperless_indexed")
     PAP_TOT=$(_json_int "$STATUS" "paperless_total")
+    # Use the larger total so both bars share the same field widths.
+    _max_tot=$(( OBS_TOT > PAP_TOT ? OBS_TOT : PAP_TOT ))
     [[ $_PROGRESS_LINES -gt 0 ]] && printf '\033[%dA' "$_PROGRESS_LINES"
     _PROGRESS_LINES=1
-    printf '\r\033[K   Obsidian:  '; _bar_str "$OBS_IDX" "$OBS_TOT"; printf '\n'
-    printf '\r\033[K   Paperless: '; _bar_str "$PAP_IDX" "$PAP_TOT"
+    printf '\r\033[K'; _progress_bar "Obsidian" "$OBS_IDX" "$OBS_TOT" "$_elapsed" "$_max_tot"; printf '\n'
+    printf '\r\033[K'; _progress_bar "Paperless" "$PAP_IDX" "$PAP_TOT" "$_elapsed" "$_max_tot"
   else
     _PROGRESS_LINES=1
-    _draw_bar "$INDEXED" "$TOTAL"
+    _draw_progress "Indexing" "$INDEXED" "$TOTAL" "$_elapsed"
   fi
 
   sleep 2
