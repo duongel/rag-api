@@ -202,7 +202,7 @@ class Searcher:
         "von", "vor", "was", "wenn", "wer", "wie", "wir", "wird",
         "zu", "zum", "zur", "alle", "wann", "war", "were", "vom",
         "suche", "summiere", "zeige", "finde", "liste",
-        "habe", "hab", "viel", "insgesamt",
+        "habe", "hab", "viel",
     }
 
     # German query-term expansion for hybrid search.  When a content
@@ -217,8 +217,8 @@ class Searcher:
         "gehalt": ["lohn", "vergütung", "abrechnung", "brutto", "netto"],
         "steuer": ["steuerbescheid", "finanzamt", "einkommensteuer"],
         "versicherung": ["police", "beitrag", "versicherungsschein"],
-        "ausgegeben": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis", "versicherung"],
-        "gekostet": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis", "versicherung"],
+        "ausgegeben": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis"],
+        "gekostet": ["rechnung", "betrag", "beitrag", "zahlung", "gebühr", "preis"],
         "summe": ["gesamtbetrag", "gesamtbeitrag", "rechnung", "beitrag"],
         "gesamt": ["gesamtbetrag", "gesamtbeitrag", "summe"],
         "insgesamt": ["gesamtbetrag", "gesamtbeitrag", "summe", "rechnung"],
@@ -314,8 +314,8 @@ class Searcher:
         # Exact content words should never be penalized because a synonym is
         # missing. Instead, exact and synonym hits provide additive boosts.
         exact_terms = set(content_words)
-        expansion_seed_words = exact_terms | {
-            w for w in raw_words if w in self._QUERY_EXPANSIONS
+        expansion_seed_words = {
+            w for w in content_words if w in self._QUERY_EXPANSIONS
         }
         synonym_terms: set[str] = set()
         for w in expansion_seed_words:

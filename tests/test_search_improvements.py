@@ -440,39 +440,39 @@ class TestHybridSearch:
         # Exact term match should be boosted (or at least never reduced)
         assert results[0]["score"] >= 0.90
 
-    def test_hybrid_cost_queries_promote_insurance_invoice_above_mileage_note(self):
+    def test_hybrid_cost_queries_promote_invoice_above_status_note(self):
         from rag_api.search import Searcher
 
         searcher = Searcher.__new__(Searcher)
 
         sem_results = [
             {
-                "file_path": "mileage.pdf",
+                "file_path": "status-note.pdf",
                 "section": "",
                 "score": 0.7922,
                 "source": "paperless",
                 "match_type": "semantic",
                 "content": (
                     "Paperless Metadata\n"
-                    "Title: Kilometerstand\n"
-                    "Tags: auto, golf7, versicherung\n\n"
-                    "Der Kilometerstand betraegt 39.320 km.\n"
-                    "Die Jahresfahrleistung meines Pkw betraegt in 2025 voraussichtlich 6.000 km."
+                    "Title: Statusnotiz\n"
+                    "Tags: auto, compact\n\n"
+                    "Der aktuelle Stand des Fahrzeugs ist dokumentiert.\n"
+                    "Die geplante Jahresfahrleistung betraegt 6.000 km."
                 ),
             },
             {
-                "file_path": "insurance.pdf",
+                "file_path": "invoice.pdf",
                 "section": "",
                 "score": 0.7757,
                 "source": "paperless",
                 "match_type": "semantic",
                 "content": (
                     "Paperless Metadata\n"
-                    "Title: Kfz Versicherung\n"
-                    "Tags: auto, golf7, versicherung\n"
+                    "Title: Fahrzeugrechnung\n"
+                    "Tags: auto, compact\n"
                     "Document Type: Rechnung\n\n"
-                    "Rechnung zu Ihrer Kfz-Versicherung.\n"
-                    "Gesamtbeitrag 304,20 EUR."
+                    "Rechnung zu Ihren Fahrzeugkosten.\n"
+                    "Gesamtbetrag 300,00 EUR."
                 ),
             },
         ]
@@ -480,12 +480,56 @@ class TestHybridSearch:
         with patch.object(searcher, "semantic_search", return_value=sem_results), \
              patch.object(searcher, "keyword_search", return_value=[]):
             results = searcher.hybrid_search(
-                "wie viel habe ich insgesamt fuer den vw golf in 2025 ausgegeben",
+                "wie viel habe ich insgesamt fuer mein auto in 2025 ausgegeben",
                 top_k=5,
             )
 
-        assert results[0]["file_path"] == "insurance.pdf"
+        assert results[0]["file_path"] == "invoice.pdf"
         assert results[0]["score"] > results[1]["score"]
+
+    def test_hybrid_expense_verbs_do_not_boost_unrelated_insurance_terms(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {
+                "file_path": "repair-invoice.pdf",
+                "section": "",
+                "score": 0.80,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Reparaturrechnung\n"
+                    "Document Type: Rechnung\n\n"
+                    "Rechnung fuer eine Reparatur.\n"
+                    "Gesamtbetrag 450,00 EUR."
+                ),
+            },
+            {
+                "file_path": "insurance-note.pdf",
+                "section": "",
+                "score": 0.81,
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": (
+                    "Paperless Metadata\n"
+                    "Title: Versicherungsschein\n"
+                    "Document Type: Vertrag\n\n"
+                    "Informationen zur Fahrzeugversicherung und zum Versicherungsschein."
+                ),
+            },
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search(
+                "was hat die reparatur gekostet",
+                top_k=5,
+            )
+
+        assert results[0]["file_path"] == "repair-invoice.pdf"
 
     def test_hybrid_keeps_expense_verbs_in_keyword_query(self):
         from rag_api.search import Searcher
