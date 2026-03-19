@@ -1,3 +1,14 @@
+## [1.10.2](https://github.com/duongel/rag-api/compare/v1.10.1...v1.10.2) (2026-03-19)
+
+
+### Bug Fixes
+
+* **search:** boost expense queries for vehicle costs ([1e52541](https://github.com/duongel/rag-api/commit/1e5254179ed7b641331dd1327af4964eaade9eaa))
+* **search:** limit expansion seeds to content words only ([bdbdca0](https://github.com/duongel/rag-api/commit/bdbdca0623d780b25dd6b1c10f5acc27bd6fb0c4))
+* **search:** preserve hyphenated identifiers in query tokenization ([6b2d645](https://github.com/duongel/rag-api/commit/6b2d64596484b6a21298edd15596930a46d32117))
+* **search:** strip punctuation from query tokens before expansion lookup ([965edd4](https://github.com/duongel/rag-api/commit/965edd4b89813df43313dc38f8fcb4a2d00f8ac7))
+* **search:** use strip-based tokenization to preserve all internal delimiters ([95c5730](https://github.com/duongel/rag-api/commit/95c573033dfc73161ea2f8ec2253e68192dfb741))
+
 ## [1.10.1](https://github.com/duongel/rag-api/compare/v1.10.0...v1.10.1) (2026-03-19)
 
 
