@@ -701,24 +701,30 @@ class Searcher:
         doc_lower = doc.lower()
         total_freq = 0.0
         total_word = 0.0
-        positions: list[int] = []
+        all_positions: list[int] = []
         for term, pattern in zip(terms, term_patterns):
             count = doc_lower.count(term)
             total_freq += min(count * 0.03, 0.15)
             if pattern.search(doc):
                 total_word += 0.05
-            pos = doc_lower.find(term)
-            if pos >= 0:
-                positions.append(pos)
+            # Collect ALL occurrences so proximity check considers
+            # close later occurrences, not just distant first ones.
+            start = 0
+            while True:
+                pos = doc_lower.find(term, start)
+                if pos < 0:
+                    break
+                all_positions.append(pos)
+                start = pos + 1
         n = len(terms)
         avg_freq = total_freq / n
         avg_word = total_word / n
         # Proximity bonus: any two matched terms within 200 chars
         proximity_bonus = 0.0
-        if len(positions) >= 2:
-            positions.sort()
-            for j in range(len(positions) - 1):
-                if positions[j + 1] - positions[j] < 200:
+        if len(all_positions) >= 2:
+            all_positions.sort()
+            for j in range(len(all_positions) - 1):
+                if all_positions[j + 1] - all_positions[j] < 200:
                     proximity_bonus = 0.05
                     break
         return round(0.70 + avg_freq + avg_word + proximity_bonus, 4)
@@ -854,6 +860,10 @@ _DOCTYPE_NAME_TO_ID: dict[str, int] = {}
 _CORR_NAME_TO_ID: dict[str, int] = {}
 # Track whether each cache was fully populated (all pages fetched)
 _LOOKUP_COMPLETE: dict[str, bool] = {"tags": False, "doctypes": False, "corrs": False}
+# Timestamp of last successful full refresh (monotonic seconds)
+_LOOKUP_LAST_REFRESH: float = 0.0
+# Auto-refresh interval in seconds (covers renames in Paperless)
+_LOOKUP_TTL: float = 300.0
 
 
 def _ensure_paperless_lookups(
@@ -869,8 +879,17 @@ def _ensure_paperless_lookups(
     of latency during API outages) when only one filter type is needed.
     """
     import requests
+    import time
+
+    global _LOOKUP_LAST_REFRESH
 
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+
+    # Auto-refresh when the cache is older than _LOOKUP_TTL so that
+    # renamed tags/correspondents/document types don't stay stale.
+    if not force_refresh and _LOOKUP_LAST_REFRESH > 0:
+        if (time.monotonic() - _LOOKUP_LAST_REFRESH) >= _LOOKUP_TTL:
+            force_refresh = True
 
     if force_refresh:
         if need_tags:
@@ -945,6 +964,10 @@ def _ensure_paperless_lookups(
             _LOOKUP_COMPLETE["corrs"] = complete
         except Exception:
             _LOOKUP_COMPLETE["corrs"] = False
+
+    # Record refresh timestamp when all three caches completed
+    if all(_LOOKUP_COMPLETE.values()):
+        _LOOKUP_LAST_REFRESH = time.monotonic()
 
 
 def _query_paperless_api(
