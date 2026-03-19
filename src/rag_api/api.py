@@ -214,8 +214,6 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         sort_by_date=req.sort_by_date,
         min_score=req.min_score,
     )
-    if req.min_score > 0:
-        results = [r for r in results if r["score"] >= req.min_score]
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
 

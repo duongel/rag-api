@@ -112,9 +112,10 @@ class Searcher:
             seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:seed_k]
             output = self._expand_with_links(seeds, query_embedding, seed_k)
 
+        if min_score > 0:
+            output = [r for r in output if r["score"] >= min_score]
+
         if sort_by_date:
-            if min_score > 0:
-                output = [r for r in output if r["score"] >= min_score]
             output.sort(
                 key=lambda r: r.get("created", ""),
                 reverse=True,
@@ -615,8 +616,6 @@ class Searcher:
                                     enriched = self._make_keyword_entry(meta, doc, score)
                                     if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
                                         results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
-                                    if not results[prev_idx].get("source_url") and enriched.get("source_url"):
-                                        results[prev_idx]["source_url"] = enriched["source_url"]
                             continue
                         entry = self._make_keyword_entry(meta, doc, score)
                         key_to_idx[key] = len(results)
@@ -639,8 +638,6 @@ class Searcher:
                                 enriched = self._make_keyword_entry(meta, doc, score)
                                 if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
                                     results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
-                                if not results[prev_idx].get("source_url") and enriched.get("source_url"):
-                                    results[prev_idx]["source_url"] = enriched["source_url"]
                         continue
                     entry = self._make_keyword_entry(meta, doc, score)
                     key_to_idx[key] = len(results)
@@ -910,6 +907,7 @@ def _ensure_paperless_lookups(
 
     if need_tags and not _LOOKUP_COMPLETE["tags"]:
         _TAG_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["tags"] = 0.0
         try:
             url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
             params: Optional[dict] = {"page_size": 500}
@@ -932,6 +930,7 @@ def _ensure_paperless_lookups(
 
     if need_doctypes and not _LOOKUP_COMPLETE["doctypes"]:
         _DOCTYPE_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["doctypes"] = 0.0
         try:
             url = f"{PAPERLESS_URL}/api/document_types/"
             params = {"page_size": 500}
@@ -954,6 +953,7 @@ def _ensure_paperless_lookups(
 
     if need_corrs and not _LOOKUP_COMPLETE["corrs"]:
         _CORR_NAME_TO_ID.clear()  # discard partial data before retry
+        _LOOKUP_LAST_REFRESH["corrs"] = 0.0
         try:
             url = f"{PAPERLESS_URL}/api/correspondents/"
             params = {"page_size": 500}
