@@ -707,7 +707,28 @@ class TestSpecificTermPenalty:
             results = searcher.hybrid_search("VW Golf Rechnung", top_k=5)
 
         # Filename hit with empty content must not receive the -0.20 penalty
+        # (file_path contains "vw", "golf", "rechnung" → full coverage)
         assert results[0]["score"] >= 1.0
+
+    def test_filename_terms_count_towards_specific_coverage(self):
+        """Obsidian filename hits with content should use file_path for coverage."""
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+
+        sem_results = [
+            {"file_path": "VW-Golf-Wartung.md", "section": "", "score": 0.80,
+             "source": "obsidian", "match_type": "semantic",
+             "content": "Ölwechsel und Inspektion durchgeführt. Gesamtbetrag 450 EUR."},
+        ]
+
+        with patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("VW Golf Kosten", top_k=5)
+
+        # "vw" and "golf" are in file_path, not in content → should still
+        # count towards specific-term coverage and avoid full penalty
+        assert results[0]["score"] >= 0.75
 
 
 class TestMultiWordDocumentScope:

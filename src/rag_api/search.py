@@ -329,13 +329,18 @@ class Searcher:
         if exact_terms or synonym_terms:
             for key, r in seen.items():
                 doc_lower = r.get("content", "").lower()
+                # Include file_path in coverage so filename matches
+                # (e.g. "VW-Golf-Rechnung.pdf") count towards term coverage
+                # even when the content snippet lacks those terms.
+                fp_lower = r.get("file_path", "").lower()
+                searchable = f"{fp_lower} {doc_lower}"
                 r = dict(r)
 
                 # Penalty for missing specific terms (proper nouns, IDs …)
-                # Skip penalty for filename hits with empty content — they
-                # matched by name and should not be demoted.
-                if specific_terms and doc_lower:
-                    specific_cov = sum(1 for t in specific_terms if t in doc_lower) / len(specific_terms)
+                # Skip penalty for results with no content and no useful
+                # file path (pure empty hits).
+                if specific_terms and searchable.strip():
+                    specific_cov = sum(1 for t in specific_terms if t in searchable) / len(specific_terms)
                     if specific_cov < 1.0:
                         r["score"] = round(r["score"] - (1 - specific_cov) * 0.20, 4)
 
