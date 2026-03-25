@@ -58,9 +58,9 @@ def _make_observer():
 # ---------------------------------------------------------------------------
 
 class _DebouncedHandler(FileSystemEventHandler):
-    """Base handler with 3-second debounce so rapid saves don't spam the indexer."""
+    """Base handler with 60-second debounce so rapid saves don't spam the indexer."""
 
-    _DEBOUNCE_SECONDS = 3.0
+    _DEBOUNCE_SECONDS = 60.0
 
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
