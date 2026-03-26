@@ -104,7 +104,7 @@ class NoteResponse(BaseModel):
 
 
 class NoteRequest(BaseModel):
-    path: str
+    path: Optional[str] = None
 
 
 class StatsResponse(BaseModel):
@@ -294,13 +294,34 @@ def get_note(
     "/note",
     response_model=NoteResponse,
     summary="Get full note (POST)",
-    description="Same as GET /note but accepts the path in a JSON body. Useful for clients that use POST for all endpoints.",
+    description=(
+        "Same as GET /note but accepts the path in a JSON body. "
+        "Useful for clients that use POST for all endpoints.\n\n"
+        "The path can be provided in the JSON body (`{\"path\": \"...\"}`) "
+        "or as a query parameter (`?path=...`). Body takes precedence."
+    ),
 )
-def post_note(req: NoteRequest, _: None = Security(require_auth)):
+def post_note(
+    req: NoteRequest,
+    path: Optional[str] = Query(
+        None,
+        description="Fallback: relative note path as query parameter when JSON body is empty.",
+    ),
+    _: None = Security(require_auth),
+):
     """Return the full Markdown content of a single note (POST variant)."""
-    result = searcher.get_note(req.path)
+    note_path = req.path or path
+    if not note_path:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                'path is required. Send as JSON body: {"path": "relative/path.md"} '
+                "or as query parameter: /note?path=relative/path.md"
+            ),
+        )
+    result = searcher.get_note(note_path)
     if result is None:
-        raise HTTPException(status_code=404, detail=f"Note not found: {req.path}")
+        raise HTTPException(status_code=404, detail=f"Note not found: {note_path}")
     return result
 
 
