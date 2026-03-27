@@ -1,3 +1,12 @@
+## [1.11.3](https://github.com/duongel/rag-api/compare/v1.11.2...v1.11.3) (2026-03-27)
+
+
+### Bug Fixes
+
+* **api:** tolerate empty body on POST /note with query-param fallback ([824d614](https://github.com/duongel/rag-api/commit/824d614207cc59b19e9c0b1e7e1a9a2732465df0))
+* clearer explanation that filters cause Obsidian notes to be ignored ([1dfb22e](https://github.com/duongel/rag-api/commit/1dfb22e99aff0719e576e5ad4020839951148c55))
+* **skill:** clarify that paperless filters exclude Obsidian results ([6c6c3bc](https://github.com/duongel/rag-api/commit/6c6c3bc4b96da3237dd14ef0a81d53433dba424b))
+
 ## [1.11.2](https://github.com/duongel/rag-api/compare/v1.11.1...v1.11.2) (2026-03-19)
 
 
