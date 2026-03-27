@@ -66,7 +66,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
     "type": "function",
     "function": {
       "name": "search_notes",
-      "description": "Semantic search across Obsidian vault AND Paperless-NGX. Use for concepts, explanations, broad topics, and questions where wording may differ from the notes. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only and excludes all Obsidian notes. Only set paperless filters when the user explicitly asks for invoices, receipts, contracts, or other scanned/uploaded Paperless documents. Supports optional newest-first sorting.",
+      "description": "Semantic search across Obsidian vault AND Paperless-NGX. Best for concepts, explanations, broad topics, and fuzzy user questions. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only and excludes all Obsidian notes. Only set filters when the user explicitly asks for invoices, receipts, contracts, scanned mail, or other Paperless documents.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -75,10 +75,10 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "default": true },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
           "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date instead of by score. Useful for queries like 'latest invoice'.", "default": false },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive). Example: [\"etron\", \"rechnung\"]" },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
-          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year. Example: 2025" },
-          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by tag names (exact match, case-insensitive). Example: [\"etron\", \"rechnung\"]" },
+          "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by creation year. Example: 2025" },
+          "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
         },
         "required": ["query"]
       }
@@ -96,10 +96,10 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
           "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date instead of by score. Useful for queries like 'latest invoice'.", "default": false },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
-          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." },
-          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by creation year." },
+          "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
         },
         "required": ["query"]
       }
@@ -115,10 +115,10 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
-          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." },
-          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by creation year." },
+          "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
         },
         "required": ["query"]
       }
@@ -164,15 +164,15 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
     "input_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string" },
+        "query": { "type": "string", "description": "Natural-language search query." },
         "top_k": { "type": "integer", "default": 5 },
         "expand_links": { "type": "boolean", "default": true },
         "min_score": { "type": "number", "default": 0.0 },
         "sort_by_date": { "type": "boolean", "default": false },
-        "paperless_tags": { "type": "array", "items": { "type": "string" } },
-        "paperless_correspondent": { "type": "string" },
-        "paperless_created_year": { "type": "integer" },
-        "paperless_document_type": { "type": "string" }
+        "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter by Paperless tag names." },
+        "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by Paperless correspondent." },
+        "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter by creation year." },
+        "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by document type." }
       },
       "required": ["query"]
     }
@@ -183,14 +183,14 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
     "input_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string" },
+        "query": { "type": "string", "description": "Natural-language search query." },
         "top_k": { "type": "integer", "default": 5 },
         "min_score": { "type": "number", "default": 0.0 },
         "sort_by_date": { "type": "boolean", "default": false },
-        "paperless_tags": { "type": "array", "items": { "type": "string" } },
-        "paperless_correspondent": { "type": "string" },
-        "paperless_created_year": { "type": "integer" },
-        "paperless_document_type": { "type": "string" }
+        "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter by Paperless tag names." },
+        "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by Paperless correspondent." },
+        "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter by creation year." },
+        "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by document type." }
       },
       "required": ["query"]
     }
@@ -201,12 +201,12 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
     "input_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string" },
+        "query": { "type": "string", "description": "Exact search string." },
         "top_k": { "type": "integer", "default": 5 },
-        "paperless_tags": { "type": "array", "items": { "type": "string" } },
-        "paperless_correspondent": { "type": "string" },
-        "paperless_created_year": { "type": "integer" },
-        "paperless_document_type": { "type": "string" }
+        "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter by Paperless tag names." },
+        "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by Paperless correspondent." },
+        "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter by creation year." },
+        "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by document type." }
       },
       "required": ["query"]
     }
@@ -253,7 +253,7 @@ This format is for Google Gemini setups using `function_declarations`.
     },
     {
       "name": "hybrid_search_notes",
-      "description": "Hybrid search that combines semantic and keyword search, then merges and reranks results. Best default for natural-language queries that also contain specific identifiers or Paperless document language. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only.",
+      "description": "Hybrid search that combines semantic and keyword search, then merges and reranks results. Best default for natural-language queries that also contain specific identifiers or Paperless document language. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only and excludes all Obsidian notes.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -261,10 +261,10 @@ This format is for Google Gemini setups using `function_declarations`.
           "top_k": { "type": "integer", "description": "Maximum number of results." },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
           "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date instead of by score." },
-          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
-          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
-          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." },
-          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive). ⚠️ Excludes Obsidian results." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive). ⚠️ Excludes Obsidian results." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year. ⚠️ Excludes Obsidian results." },
+          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\". ⚠️ Excludes Obsidian results." }
         },
         "required": ["query"]
       }
@@ -341,10 +341,10 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
     "parameter_definitions": {
       "query": { "type": "str", "description": "Exact search string.", "required": true },
       "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
-      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive).", "required": false },
-      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive).", "required": false },
-      "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year.", "required": false },
-      "paperless_document_type": { "type": "str", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\".", "required": false }
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year. ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_document_type": { "type": "str", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\". ⚠️ Excludes Obsidian results.", "required": false }
     }
   },
   {
@@ -359,9 +359,14 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
 
 ### Recommended Agent Behavior
 
+> **🚫 CRITICAL RULE — read this first:**
+> **NEVER set `paperless_*` filters unless the user EXPLICITLY asks for Paperless documents (invoices, receipts, contracts, scanned mail, correspondents, or document types).**
+> Setting ANY `paperless_*` parameter — even one — completely excludes ALL Obsidian notes from results. Most questions are answered by Obsidian notes. When in doubt, search WITHOUT filters.
+
 - **Default: search without filters.** All endpoints search Obsidian AND Paperless together when no `paperless_*` filter is set. This is almost always the right approach.
 - **⚠️ Setting any `paperless_*` filter excludes ALL Obsidian notes from results.** Only set filters when the user explicitly asks for invoices, receipts, contracts, scanned mail, or other Paperless-specific documents.
-- Do NOT set Paperless filters for general knowledge questions (e.g. "wie breit sind die PV Module?", "how does my heat pump work?", "was ist mein WLAN-Passwort?") — the answer is likely in Obsidian notes.
+- **If the question does NOT contain words like "Rechnung", "Vertrag", "Dokument", "Brief", "Scan", "Kontoauszug", or a correspondent name → do NOT set any `paperless_*` filter.**
+- Do NOT set Paperless filters for general knowledge questions (e.g. "wie breit sind die PV Module?", "how does my heat pump work?", "was ist mein WLAN-Passwort?", "welche Kamera ist im Garten?") — the answer is likely in Obsidian notes.
 - Use `keyword_search_notes` first for abbreviations, URLs, hostnames, model numbers, code symbols, and exact identifiers.
 - Use `hybrid_search_notes` as the default for natural-language queries that also contain concrete business terms, names, or likely exact identifiers.
 - Use `search_notes` for meanings, concepts, explanations, and topic-based questions.
@@ -369,6 +374,7 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
 - Use `min_score: 0.70` as the default for precise questions.
 - If the user asks for the latest, newest, or most recent document, set `sort_by_date: true`.
 - If `search_notes` unexpectedly returns empty: often an identifier issue → try `keyword_search_notes` or `hybrid_search_notes`.
+- **Fallback strategy:** If the first search returns no good results (score < 0.70 or results don't match), retry with a different endpoint or fewer/different terms before giving up.
 
 ### When Semantic Search Fails (→ Use Keyword)
 
@@ -629,20 +635,25 @@ Use `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, or `p
 | "was ist mein WLAN-Passwort?" | Personal notes — stored in Obsidian, not Paperless |
 | "welche Kamera ist im Garten installiert?" | Home setup info — Obsidian notes |
 | "Zusammenfassung meiner Notizen zu Solar" | Could be in Obsidian AND Paperless — don't restrict |
+| "wie funktioniert die Heizung?" | Explanation/concept — Obsidian notes |
+| "welchen Router habe ich?" | Hardware/setup info — Obsidian notes |
+| "was steht in meiner Notiz zu Docker?" | Explicitly about notes — Obsidian |
+| "wie ist mein Netzwerk aufgebaut?" | Technical documentation — Obsidian notes |
+| "welche Smart Home Geräte habe ich?" | Inventory/setup — Obsidian notes |
 
-**Rule of thumb:** If the user does NOT mention invoices, receipts, letters, contracts, scanned mail, correspondents, or document types, do NOT set any `paperless_*` filter.
+> **Rule of thumb:** If the user does NOT mention invoices, receipts, letters, contracts, scanned mail, correspondents, or document types → do NOT set any `paperless_*` filter. When unsure, search WITHOUT filters first.
 
 ### Recommended Order for Ambiguous Questions
 
-1. **Default: search WITHOUT `paperless_*` filters** to include both Obsidian and Paperless results.
-2. Only if the question explicitly asks for Paperless documents (invoices, contracts, scanned mail), set the strongest available `paperless_*` filters.
+1. **🚫 Default: search WITHOUT `paperless_*` filters** to include both Obsidian and Paperless results. This is the correct approach for most questions.
+2. Only if the question explicitly mentions Paperless documents (invoices, contracts, scanned mail, receipts, correspondents, document types), set the strongest available `paperless_*` filters.
 3. If the user asks for the latest/newest/most recent Paperless result, also set `sort_by_date: true`.
 4. If the question contains an identifier only (abbreviation, hostname, model name, ID, version number), use `/keyword-search`.
 5. If the question mixes natural language with exact names, entities, or document terms, use `/hybrid-search` with `min_score: 0.70`.
 6. Otherwise use `/search` with `min_score: 0.70`.
 7. For relevant results, fetch full context with `/note`.
-8. If empty, retry `/search` or `/hybrid-search` with `min_score: 0.60` and `top_k: 10`.
-9. If still empty, try `/keyword-search`.
+8. **Fallback:** If empty or low scores (< 0.70), retry with a different endpoint, fewer terms, or lower `min_score: 0.60` and `top_k: 10`.
+9. **Last resort:** Try `/keyword-search` without any filters.
 
 ### Multi-step Strategy (Examples)
 
