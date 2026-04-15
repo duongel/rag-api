@@ -1,3 +1,16 @@
+# [1.12.0](https://github.com/duongel/rag-api/compare/v1.11.3...v1.12.0) (2026-04-15)
+
+
+### Bug Fixes
+
+* **api:** sanitize document filters ([cd3f731](https://github.com/duongel/rag-api/commit/cd3f731eacec19ef824afe00f147233dbd110d7f))
+* **api:** validate effective document filters ([590fdc2](https://github.com/duongel/rag-api/commit/590fdc23f94c9601bfe919b08914c138021f318e))
+
+
+### Features
+
+* **api:** add paperless documents endpoint ([0eee22f](https://github.com/duongel/rag-api/commit/0eee22fa119ef7d526a688caebee9be48cdb0985))
+
 ## [1.11.3](https://github.com/duongel/rag-api/compare/v1.11.2...v1.11.3) (2026-03-27)
 
 
