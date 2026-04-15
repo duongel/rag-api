@@ -723,24 +723,18 @@ class Searcher:
         except Exception:
             return []
 
-        entries_by_key: dict[str, dict] = {}
+        entries_by_key: dict[str, tuple[int, dict]] = {}
         for meta, doc in zip(results.get("metadatas") or [], results.get("documents") or []):
             if meta.get("source") != "paperless":
                 continue
             key = self._result_key(meta, collapse_paperless_sections=True)
             entry = self._make_keyword_entry(meta, doc, 1.0)
-            entry["_chunk_index"] = meta.get("chunk_index", 10 ** 9)
+            chunk_index = meta.get("chunk_index", 10 ** 9)
             existing = entries_by_key.get(key)
-            if existing is None:
-                entries_by_key[key] = entry
-                continue
+            if existing is None or chunk_index < existing[0]:
+                entries_by_key[key] = (chunk_index, entry)
 
-            if entry["_chunk_index"] < existing.get("_chunk_index", 10 ** 9):
-                entries_by_key[key] = entry
-
-        output = list(entries_by_key.values())
-        for entry in output:
-            entry.pop("_chunk_index", None)
+        output = [entry for _, entry in entries_by_key.values()]
         if sort_by_date:
             output.sort(key=lambda r: (r.get("created", ""), r["file_path"]), reverse=True)
         else:

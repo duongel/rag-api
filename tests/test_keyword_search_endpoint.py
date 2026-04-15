@@ -1,11 +1,11 @@
-"""Tests for POST /keyword-search request validation and filter-only mode."""
+"""Tests for POST /keyword-search and /documents request validation."""
 
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from rag_api.api import KeywordSearchRequest, app
+from rag_api.api import DocumentsRequest, SearchRequest, app
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ class TestKeywordSearchEndpoint:
             paperless_document_type=None,
         )
 
-    def test_filter_only_request_is_allowed(self, client, _patch_searcher):
+    def test_filter_only_request_returns_422(self, client, _patch_searcher):
         resp = client.post(
             "/keyword-search",
             json={
@@ -54,21 +54,21 @@ class TestKeywordSearchEndpoint:
             },
         )
 
-        assert resp.status_code == 200
-        _patch_searcher.keyword_search.assert_called_once_with(
-            "",
-            5,
-            paperless_tags=["nick"],
-            paperless_correspondent="Kreisverwaltung Westerwaldkreis",
-            paperless_created_year=None,
-            paperless_document_type=None,
-        )
+        assert resp.status_code == 422
+        _patch_searcher.keyword_search.assert_not_called()
 
     def test_empty_request_still_returns_422(self, client, _patch_searcher):
         resp = client.post("/keyword-search", json={})
 
         assert resp.status_code == 422
-        assert "query is required unless at least one paperless_* filter is provided" in resp.json()["detail"]
+        assert "query" in str(resp.json()["detail"]).lower()
+        _patch_searcher.keyword_search.assert_not_called()
+
+    def test_blank_query_returns_422(self, client, _patch_searcher):
+        resp = client.post("/keyword-search", json={"query": "   "})
+
+        assert resp.status_code == 422
+        assert "query must not be empty" in resp.json()["detail"]
         _patch_searcher.keyword_search.assert_not_called()
 
 
@@ -111,10 +111,29 @@ class TestDocumentsEndpoint:
         assert "At least one paperless_* filter is required for /documents" in resp.json()["detail"]
         _patch_searcher.list_documents.assert_not_called()
 
+    def test_documents_rejects_blank_filter_values(self, client, _patch_searcher):
+        resp = client.post(
+            "/documents",
+            json={
+                "paperless_correspondent": "   ",
+                "paperless_tags": [""],
+                "paperless_created_year": 0,
+            },
+        )
 
-class TestKeywordSearchRequestModel:
-    def test_query_is_optional(self):
-        req = KeywordSearchRequest(paperless_tags=["nick"])
+        assert resp.status_code == 422
+        assert "At least one paperless_* filter is required for /documents" in resp.json()["detail"]
+        _patch_searcher.list_documents.assert_not_called()
 
-        assert req.query is None
+
+class TestRequestModels:
+    def test_search_request_requires_query(self):
+        req = SearchRequest(query="NVR")
+
+        assert req.query == "NVR"
+
+    def test_documents_request_parses_filters(self):
+        req = DocumentsRequest(paperless_tags=["nick"])
+
         assert req.paperless_tags == ["nick"]
+        assert req.sort_by_date is True

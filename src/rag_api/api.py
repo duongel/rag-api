@@ -130,15 +130,6 @@ class ReindexResponse(BaseModel):
     message: str
 
 
-class KeywordSearchRequest(BaseModel):
-    query: Optional[str] = None
-    top_k: int = 5
-    paperless_tags: Optional[list[str]] = None
-    paperless_correspondent: Optional[str] = None
-    paperless_created_year: Optional[int] = None
-    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
-
-
 class DocumentsRequest(BaseModel):
     top_k: int = 10
     sort_by_date: bool = True
@@ -172,46 +163,43 @@ def _enrich_source_url(result: dict) -> dict:
     return result
 
 
-def _require_query_or_paperless_filter(req: KeywordSearchRequest) -> str:
-    """Allow filter-only keyword search, but only for explicit Paperless filters."""
-    if req.query:
-        return req.query
+def _has_paperless_filter(*values: object) -> bool:
+    """Return True when at least one Paperless filter is explicitly set."""
+    return any(_is_effective_filter_value(value) for value in values)
 
-    has_paperless_filter = any(
-        value is not None and value != []
-        for value in (
-            req.paperless_tags,
-            req.paperless_correspondent,
-            req.paperless_created_year,
-            req.paperless_document_type,
-        )
-    )
-    if has_paperless_filter:
-        # Empty string intentionally triggers a metadata-only keyword scan
-        # constrained by Paperless filters inside searcher.keyword_search().
-        return ""
 
+def _is_effective_filter_value(value: object) -> bool:
+    """Treat blank strings, zero-like ints, and empty lists as unset filters."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_is_effective_filter_value(item) for item in value)
+    if isinstance(value, int):
+        return value > 0
+    return bool(value)
+
+
+def _require_non_empty_query(query: str) -> str:
+    """Reject empty or whitespace-only search queries."""
+    cleaned = query.strip()
+    if cleaned:
+        return cleaned
     raise HTTPException(
         status_code=422,
-        detail=(
-            "query is required unless at least one paperless_* filter is provided "
-            "for a filter-only keyword search."
-        ),
+        detail="query must not be empty or whitespace.",
     )
 
 
 def _require_paperless_filter(req: DocumentsRequest) -> None:
     """Require at least one explicit Paperless filter for filter-only listing."""
-    has_paperless_filter = any(
-        value is not None and value != []
-        for value in (
-            req.paperless_tags,
-            req.paperless_correspondent,
-            req.paperless_created_year,
-            req.paperless_document_type,
-        )
-    )
-    if has_paperless_filter:
+    if _has_paperless_filter(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    ):
         return
     raise HTTPException(
         status_code=422,
@@ -297,15 +285,14 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         "IP addresses, port numbers, model names (`USG-3P`), version strings (`v3.2.1`), "
         "config keys (`VAULT_PATH`), class names, enum values, "
         "or any query where the exact string must appear in the note.\n\n"
-        "**Filter-only Paperless listing:** prefer `/documents` instead of sending an empty query.\n\n"
+        "**Filter-only Paperless listing:** use `/documents`.\n\n"
         "**Do NOT use for:** conceptual questions, topics, explanations → use `/search`."
     ),
 )
-def keyword_search(req: KeywordSearchRequest, _: None = Security(require_auth)):
+def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
-    query = _require_query_or_paperless_filter(req)
     results = searcher.keyword_search(
-        query, req.top_k,
+        _require_non_empty_query(req.query), req.top_k,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
