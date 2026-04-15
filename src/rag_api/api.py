@@ -130,6 +130,24 @@ class ReindexResponse(BaseModel):
     message: str
 
 
+class KeywordSearchRequest(BaseModel):
+    query: Optional[str] = None
+    top_k: int = 5
+    paperless_tags: Optional[list[str]] = None
+    paperless_correspondent: Optional[str] = None
+    paperless_created_year: Optional[int] = None
+    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+
+
+class DocumentsRequest(BaseModel):
+    top_k: int = 10
+    sort_by_date: bool = True
+    paperless_tags: Optional[list[str]] = None
+    paperless_correspondent: Optional[str] = None
+    paperless_created_year: Optional[int] = None
+    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+
+
 # ── helpers ──────────────────────────────────────────────────────────────
 
 def _enrich_source_url(result: dict) -> dict:
@@ -152,6 +170,56 @@ def _enrich_source_url(result: dict) -> dict:
             f"{PUBLIC_URL.rstrip('/')}/note?path={quote(file_path)}"
         )
     return result
+
+
+def _require_query_or_paperless_filter(req: KeywordSearchRequest) -> str:
+    """Allow filter-only keyword search, but only for explicit Paperless filters."""
+    if req.query:
+        return req.query
+
+    has_paperless_filter = any(
+        value is not None and value != []
+        for value in (
+            req.paperless_tags,
+            req.paperless_correspondent,
+            req.paperless_created_year,
+            req.paperless_document_type,
+        )
+    )
+    if has_paperless_filter:
+        # Empty string intentionally triggers a metadata-only keyword scan
+        # constrained by Paperless filters inside searcher.keyword_search().
+        return ""
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "query is required unless at least one paperless_* filter is provided "
+            "for a filter-only keyword search."
+        ),
+    )
+
+
+def _require_paperless_filter(req: DocumentsRequest) -> None:
+    """Require at least one explicit Paperless filter for filter-only listing."""
+    has_paperless_filter = any(
+        value is not None and value != []
+        for value in (
+            req.paperless_tags,
+            req.paperless_correspondent,
+            req.paperless_created_year,
+            req.paperless_document_type,
+        )
+    )
+    if has_paperless_filter:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "At least one paperless_* filter is required for /documents. "
+            "Use /search, /hybrid-search, or /keyword-search for query-based retrieval."
+        ),
+    )
 
 
 # ── endpoints ────────────────────────────────────────────────────────────
@@ -229,17 +297,45 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         "IP addresses, port numbers, model names (`USG-3P`), version strings (`v3.2.1`), "
         "config keys (`VAULT_PATH`), class names, enum values, "
         "or any query where the exact string must appear in the note.\n\n"
+        "**Filter-only Paperless listing:** prefer `/documents` instead of sending an empty query.\n\n"
         "**Do NOT use for:** conceptual questions, topics, explanations → use `/search`."
     ),
 )
-def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
+def keyword_search(req: KeywordSearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
+    query = _require_query_or_paperless_filter(req)
     results = searcher.keyword_search(
-        req.query, req.top_k,
+        query, req.top_k,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
         paperless_document_type=req.paperless_document_type,
+    )
+    results = [_enrich_source_url(r) for r in results]
+    return SearchResponse(results=results, count=len(results))
+
+
+@app.post(
+    "/documents",
+    response_model=SearchResponse,
+    summary="List Paperless documents by metadata",
+    description=(
+        "Lists Paperless documents using metadata-only filters such as tags, correspondent, "
+        "creation year, and document type.\n\n"
+        "Use this when you want filter-only Paperless retrieval without providing a text query.\n\n"
+        "At least one `paperless_*` filter is required."
+    ),
+)
+def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
+    """List Paperless documents matching explicit metadata filters."""
+    _require_paperless_filter(req)
+    results = searcher.list_documents(
+        req.top_k,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
+        sort_by_date=req.sort_by_date,
     )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
