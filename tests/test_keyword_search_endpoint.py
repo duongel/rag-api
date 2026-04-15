@@ -125,6 +125,42 @@ class TestDocumentsEndpoint:
         assert "At least one paperless_* filter is required for /documents" in resp.json()["detail"]
         _patch_searcher.list_documents.assert_not_called()
 
+    def test_documents_sanitizes_mixed_filter_values(self, client, _patch_searcher):
+        _patch_searcher.list_documents.return_value = []
+
+        resp = client.post(
+            "/documents",
+            json={
+                "paperless_correspondent": "   ",
+                "paperless_tags": ["nick", ""],
+                "paperless_created_year": 0,
+                "paperless_document_type": " Bescheid ",
+            },
+        )
+
+        assert resp.status_code == 200
+        _patch_searcher.list_documents.assert_called_once_with(
+            10,
+            paperless_tags=["nick"],
+            paperless_correspondent=None,
+            paperless_created_year=None,
+            paperless_document_type="Bescheid",
+            sort_by_date=True,
+        )
+
+    def test_documents_rejects_non_positive_top_k(self, client, _patch_searcher):
+        resp = client.post(
+            "/documents",
+            json={
+                "top_k": 0,
+                "paperless_tags": ["nick"],
+            },
+        )
+
+        assert resp.status_code == 422
+        assert "greater than or equal to 1" in str(resp.json()["detail"]).lower()
+        _patch_searcher.list_documents.assert_not_called()
+
 
 class TestRequestModels:
     def test_search_request_requires_query(self):

@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from urllib.parse import quote
@@ -131,7 +131,7 @@ class ReindexResponse(BaseModel):
 
 
 class DocumentsRequest(BaseModel):
-    top_k: int = 10
+    top_k: int = Field(10, ge=1)
     sort_by_date: bool = True
     paperless_tags: Optional[list[str]] = None
     paperless_correspondent: Optional[str] = None
@@ -190,6 +190,40 @@ def _require_non_empty_query(query: str) -> str:
         status_code=422,
         detail="query must not be empty or whitespace.",
     )
+
+
+def _normalize_paperless_filters(
+    paperless_tags: Optional[list[str]] = None,
+    paperless_correspondent: Optional[str] = None,
+    paperless_created_year: Optional[int] = None,
+    paperless_document_type: Optional[str] = None,
+) -> tuple[Optional[list[str]], Optional[str], Optional[int], Optional[str]]:
+    """Trim and drop ineffective filter values before search execution."""
+    cleaned_tags = None
+    if paperless_tags is not None:
+        normalized_tags = [
+            tag.strip()
+            for tag in paperless_tags
+            if isinstance(tag, str) and tag.strip()
+        ]
+        if normalized_tags:
+            cleaned_tags = normalized_tags
+
+    cleaned_correspondent = None
+    if paperless_correspondent is not None:
+        stripped = paperless_correspondent.strip()
+        if stripped:
+            cleaned_correspondent = stripped
+
+    cleaned_year = paperless_created_year if _is_effective_filter_value(paperless_created_year) else None
+
+    cleaned_document_type = None
+    if paperless_document_type is not None:
+        stripped = paperless_document_type.strip()
+        if stripped:
+            cleaned_document_type = stripped
+
+    return cleaned_tags, cleaned_correspondent, cleaned_year, cleaned_document_type
 
 
 def _require_paperless_filter(req: DocumentsRequest) -> None:
@@ -315,6 +349,25 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
 )
 def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
     """List Paperless documents matching explicit metadata filters."""
+    (
+        paperless_tags,
+        paperless_correspondent,
+        paperless_created_year,
+        paperless_document_type,
+    ) = _normalize_paperless_filters(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    )
+    req = DocumentsRequest(
+        top_k=req.top_k,
+        sort_by_date=req.sort_by_date,
+        paperless_tags=paperless_tags,
+        paperless_correspondent=paperless_correspondent,
+        paperless_created_year=paperless_created_year,
+        paperless_document_type=paperless_document_type,
+    )
     _require_paperless_filter(req)
     results = searcher.list_documents(
         req.top_k,
