@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from urllib.parse import quote
@@ -130,6 +130,15 @@ class ReindexResponse(BaseModel):
     message: str
 
 
+class DocumentsRequest(BaseModel):
+    top_k: int = Field(10, ge=1)
+    sort_by_date: bool = True
+    paperless_tags: Optional[list[str]] = None
+    paperless_correspondent: Optional[str] = None
+    paperless_created_year: Optional[int] = None
+    paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+
+
 # ── helpers ──────────────────────────────────────────────────────────────
 
 def _enrich_source_url(result: dict) -> dict:
@@ -152,6 +161,87 @@ def _enrich_source_url(result: dict) -> dict:
             f"{PUBLIC_URL.rstrip('/')}/note?path={quote(file_path)}"
         )
     return result
+
+
+def _has_paperless_filter(*values: object) -> bool:
+    """Return True when at least one Paperless filter is explicitly set."""
+    return any(_is_effective_filter_value(value) for value in values)
+
+
+def _is_effective_filter_value(value: object) -> bool:
+    """Treat blank strings, zero-like ints, and empty lists as unset filters."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_is_effective_filter_value(item) for item in value)
+    if isinstance(value, int):
+        return value > 0
+    return bool(value)
+
+
+def _require_non_empty_query(query: str) -> str:
+    """Reject empty or whitespace-only search queries."""
+    cleaned = query.strip()
+    if cleaned:
+        return cleaned
+    raise HTTPException(
+        status_code=422,
+        detail="query must not be empty or whitespace.",
+    )
+
+
+def _normalize_paperless_filters(
+    paperless_tags: Optional[list[str]] = None,
+    paperless_correspondent: Optional[str] = None,
+    paperless_created_year: Optional[int] = None,
+    paperless_document_type: Optional[str] = None,
+) -> tuple[Optional[list[str]], Optional[str], Optional[int], Optional[str]]:
+    """Trim and drop ineffective filter values before search execution."""
+    cleaned_tags = None
+    if paperless_tags is not None:
+        normalized_tags = [
+            tag.strip()
+            for tag in paperless_tags
+            if isinstance(tag, str) and tag.strip()
+        ]
+        if normalized_tags:
+            cleaned_tags = normalized_tags
+
+    cleaned_correspondent = None
+    if paperless_correspondent is not None:
+        stripped = paperless_correspondent.strip()
+        if stripped:
+            cleaned_correspondent = stripped
+
+    cleaned_year = paperless_created_year if _is_effective_filter_value(paperless_created_year) else None
+
+    cleaned_document_type = None
+    if paperless_document_type is not None:
+        stripped = paperless_document_type.strip()
+        if stripped:
+            cleaned_document_type = stripped
+
+    return cleaned_tags, cleaned_correspondent, cleaned_year, cleaned_document_type
+
+
+def _require_paperless_filter(req: DocumentsRequest) -> None:
+    """Require at least one explicit Paperless filter for filter-only listing."""
+    if _has_paperless_filter(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    ):
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "At least one paperless_* filter is required for /documents. "
+            "Use /search, /hybrid-search, or /keyword-search for query-based retrieval."
+        ),
+    )
 
 
 # ── endpoints ────────────────────────────────────────────────────────────
@@ -229,17 +319,63 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         "IP addresses, port numbers, model names (`USG-3P`), version strings (`v3.2.1`), "
         "config keys (`VAULT_PATH`), class names, enum values, "
         "or any query where the exact string must appear in the note.\n\n"
+        "**Filter-only Paperless listing:** use `/documents`.\n\n"
         "**Do NOT use for:** conceptual questions, topics, explanations → use `/search`."
     ),
 )
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
     results = searcher.keyword_search(
-        req.query, req.top_k,
+        _require_non_empty_query(req.query), req.top_k,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
         paperless_document_type=req.paperless_document_type,
+    )
+    results = [_enrich_source_url(r) for r in results]
+    return SearchResponse(results=results, count=len(results))
+
+
+@app.post(
+    "/documents",
+    response_model=SearchResponse,
+    summary="List Paperless documents by metadata",
+    description=(
+        "Lists Paperless documents using metadata-only filters such as tags, correspondent, "
+        "creation year, and document type.\n\n"
+        "Use this when you want filter-only Paperless retrieval without providing a text query.\n\n"
+        "At least one `paperless_*` filter is required."
+    ),
+)
+def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
+    """List Paperless documents matching explicit metadata filters."""
+    (
+        paperless_tags,
+        paperless_correspondent,
+        paperless_created_year,
+        paperless_document_type,
+    ) = _normalize_paperless_filters(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    )
+    req = DocumentsRequest(
+        top_k=req.top_k,
+        sort_by_date=req.sort_by_date,
+        paperless_tags=paperless_tags,
+        paperless_correspondent=paperless_correspondent,
+        paperless_created_year=paperless_created_year,
+        paperless_document_type=paperless_document_type,
+    )
+    _require_paperless_filter(req)
+    results = searcher.list_documents(
+        req.top_k,
+        paperless_tags=req.paperless_tags,
+        paperless_correspondent=req.paperless_correspondent,
+        paperless_created_year=req.paperless_created_year,
+        paperless_document_type=req.paperless_document_type,
+        sort_by_date=req.sort_by_date,
     )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))

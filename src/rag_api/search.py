@@ -697,6 +697,50 @@ class Searcher:
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:top_k]
 
+    def list_documents(
+        self, top_k: int = 10,
+        paperless_tags: Optional[list[str]] = None,
+        paperless_correspondent: Optional[str] = None,
+        paperless_created_year: Optional[int] = None,
+        paperless_document_type: Optional[str] = None,
+        sort_by_date: bool = True,
+    ) -> list[dict]:
+        """List Paperless documents matching metadata filters.
+
+        This is a filter-only retrieval path for callers that want
+        documents by structured metadata without supplying a search query.
+        Results are deduplicated on document level.
+        """
+        where = _build_chromadb_filters(
+            paperless_tags, paperless_correspondent, paperless_created_year,
+            paperless_document_type,
+        )
+        if where is None:
+            return []
+
+        try:
+            results = self.collection.get(where=where, include=["documents", "metadatas"])
+        except Exception:
+            return []
+
+        entries_by_key: dict[str, tuple[int, dict]] = {}
+        for meta, doc in zip(results.get("metadatas") or [], results.get("documents") or []):
+            if meta.get("source") != "paperless":
+                continue
+            key = self._result_key(meta, collapse_paperless_sections=True)
+            entry = self._make_keyword_entry(meta, doc, 1.0)
+            chunk_index = meta.get("chunk_index", 10 ** 9)
+            existing = entries_by_key.get(key)
+            if existing is None or chunk_index < existing[0]:
+                entries_by_key[key] = (chunk_index, entry)
+
+        output = [entry for _, entry in entries_by_key.values()]
+        if sort_by_date:
+            output.sort(key=lambda r: (r.get("created", ""), r["file_path"]), reverse=True)
+        else:
+            output.sort(key=lambda r: r["file_path"])
+        return output[:top_k]
+
     @staticmethod
     def _keyword_score(
         doc: str, query_lower: str, word_pattern: re.Pattern[str]

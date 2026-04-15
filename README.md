@@ -90,6 +90,7 @@ Typical endpoint choices:
 - Use `/search` for concepts, explanations, and broad semantic questions
 - Use `/keyword-search` for abbreviations, identifiers, filenames, and exact strings
 - Use `/hybrid-search` for queries like "Kaufvertrag Grundstück Montabaur" or "letzte Telekom Rechnung"
+- Use `/documents` for filter-only Paperless lookups by tags, correspondent, year, or document type
 - For Paperless queries, prefer `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, and `paperless_document_type` before ranking
 
 ## Architecture
@@ -100,7 +101,7 @@ graph LR
 
     subgraph Docker Network
         API["rag-api<br><sub>FastAPI · ChromaDB</sub>"]
-        SEARCH["/search · /keyword-search · /hybrid-search"]
+        SEARCH["/search · /keyword-search · /hybrid-search · /documents"]
         FILTER["Paperless pre-filter<br><sub>tags / correspondent / year / document type</sub>"]
         CHROMA["ChromaDB index<br><sub>semantic + keyword retrieval</sub>"]
         OLL["ollama<br><sub>nomic-embed-text</sub>"]

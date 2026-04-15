@@ -46,12 +46,13 @@ Goal: no MCP, no extra services, minimal context. Agents should prefer calling t
 
 ### Minimal Tool Set
 
-For most agents, these three operations are sufficient:
+For most agents, these operations are sufficient:
 
 1. `search_notes`
 2. `hybrid_search_notes`
 3. `keyword_search_notes`
-4. `get_note`
+4. `list_paperless_documents`
+5. `get_note`
 
 `reindex` is optional and mainly useful for admin/maintenance tasks.
 
@@ -109,7 +110,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
     "type": "function",
     "function": {
       "name": "keyword_search_notes",
-      "description": "Exact text search in filenames and note content. Multi-word queries use AND logic. Use for abbreviations, URLs, class names, enum values, identifiers, and exact strings. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only and excludes all Obsidian notes. Only set paperless filters when the user explicitly asks for scanned/uploaded Paperless documents.",
+      "description": "Exact text search in filenames and note content. Multi-word queries use AND logic. Use for abbreviations, URLs, class names, enum values, identifiers, and exact strings. ⚠️ By default (no filters), BOTH Obsidian and Paperless are searched. Setting any paperless_* filter restricts results to Paperless only and excludes all Obsidian notes. For filter-only Paperless requests, use `list_paperless_documents`.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -121,6 +122,25 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
           "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
         },
         "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_paperless_documents",
+      "description": "List Paperless documents by metadata only. Use when the user wants invoices, receipts, contracts, or scanned mail filtered by tags, correspondent, year, or document type without a text query. Requires at least one paperless_* filter.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 10 },
+          "sort_by_date": { "type": "boolean", "description": "Sort newest first.", "default": true },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year." },
+          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\"." }
+        },
+        "required": []
       }
     }
   },
@@ -148,6 +168,7 @@ Recommended HTTP mapping:
 | `search_notes` | `POST /search` |
 | `hybrid_search_notes` | `POST /hybrid-search` |
 | `keyword_search_notes` | `POST /keyword-search` |
+| `list_paperless_documents` | `POST /documents` |
 | `get_note` | `GET /note?path=...` or `POST /note` |
 
 Every mapping above also requires `Authorization: Bearer <API_BEARER_TOKEN>`.
@@ -209,6 +230,21 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
         "paperless_document_type": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter by document type." }
       },
       "required": ["query"]
+    }
+  },
+  {
+    "name": "list_paperless_documents",
+    "description": "List Paperless documents by metadata only. Use when the user wants Paperless documents filtered by tags, correspondent, year, or document type without a text query.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "top_k": { "type": "integer", "default": 10 },
+        "sort_by_date": { "type": "boolean", "default": true },
+        "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by Paperless tag names." },
+        "paperless_correspondent": { "type": "string", "description": "Filter by Paperless correspondent." },
+        "paperless_created_year": { "type": "integer", "description": "Filter by creation year." },
+        "paperless_document_type": { "type": "string", "description": "Filter by document type." }
+      }
     }
   },
   {
@@ -286,6 +322,21 @@ This format is for Google Gemini setups using `function_declarations`.
       }
     },
     {
+      "name": "list_paperless_documents",
+      "description": "List Paperless documents by metadata only. Use when the user wants Paperless documents filtered by tags, correspondent, year, or document type without a text query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "top_k": { "type": "integer", "description": "Maximum number of results." },
+          "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date." },
+          "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive). ⚠️ Excludes Obsidian results." },
+          "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive). ⚠️ Excludes Obsidian results." },
+          "paperless_created_year": { "type": "integer", "description": "Filter Paperless documents by creation year. ⚠️ Excludes Obsidian results." },
+          "paperless_document_type": { "type": "string", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\". ⚠️ Excludes Obsidian results." }
+        }
+      }
+    },
+    {
       "name": "get_note",
       "description": "Fetch the full Markdown content of one note by relative path.",
       "parameters": {
@@ -341,6 +392,18 @@ This format is for Cohere Command R/R+ setups using `parameter_definitions`.
     "parameter_definitions": {
       "query": { "type": "str", "description": "Exact search string.", "required": true },
       "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
+      "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year. ⚠️ Excludes Obsidian results.", "required": false },
+      "paperless_document_type": { "type": "str", "description": "Filter Paperless documents by document type name, e.g. \"Rechnung\" or \"Vertrag\". ⚠️ Excludes Obsidian results.", "required": false }
+    }
+  },
+  {
+    "name": "list_paperless_documents",
+    "description": "List Paperless documents by metadata only. Use when the user wants Paperless documents filtered by tags, correspondent, year, or document type without a text query.",
+    "parameter_definitions": {
+      "top_k": { "type": "int", "description": "Maximum number of results.", "required": false },
+      "sort_by_date": { "type": "bool", "description": "Sort newest-first by creation date.", "required": false },
       "paperless_tags": { "type": "list[str]", "description": "Filter Paperless documents by tag names (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
       "paperless_correspondent": { "type": "str", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive). ⚠️ Excludes Obsidian results.", "required": false },
       "paperless_created_year": { "type": "int", "description": "Filter Paperless documents by creation year. ⚠️ Excludes Obsidian results.", "required": false },
