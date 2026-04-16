@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 VAULT_PATH = os.environ.get("VAULT_PATH", "/obsidian")
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/app/data/chroma")
@@ -53,5 +54,19 @@ WATCHER_POLLING = os.environ.get("WATCHER_POLLING", "false").lower() in {"1", "t
 # during full reindex. Higher values speed up initial indexing but increase
 # Ollama load. Set to 1 to disable concurrency.
 PAPERLESS_REINDEX_WORKERS = int(os.environ.get("PAPERLESS_REINDEX_WORKERS", "4"))
+
+AGENT_MAX_CALLS_PER_MESSAGE = int(os.environ.get("AGENT_MAX_CALLS_PER_MESSAGE", "0"))
+AGENT_COUNTER_DB_PATH = os.environ.get(
+    "AGENT_COUNTER_DB_PATH",
+    str(Path(CHROMA_PATH) / "agent_call_counters.sqlite3"),
+)
+AGENT_CONVERSATION_HEADER = os.environ.get(
+    "AGENT_CONVERSATION_HEADER",
+    "x-rag-conversation-id",
+)
+AGENT_MESSAGE_HEADER = os.environ.get(
+    "AGENT_MESSAGE_HEADER",
+    "x-rag-message-id",
+)
 
 API_PORT = 8080

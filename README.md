@@ -145,6 +145,32 @@ graph LR
 
 Connect rag-api to n8n's Docker network (e.g. `npm-net`) with `ACCESS_MODE=internal`. n8n reaches the API directly at `http://rag-api:8080` — no exposed port, no token needed.
 
+### Agent Call Budget
+
+If your n8n AI Agent tends to over-call `rag-api`, you can enforce a hard server-side cap per user message:
+
+```env
+AGENT_MAX_CALLS_PER_MESSAGE=9
+AGENT_CONVERSATION_HEADER=x-rag-conversation-id
+AGENT_MESSAGE_HEADER=x-rag-message-id
+```
+
+Send both headers on every `/search`, `/keyword-search`, `/hybrid-search`, `/documents`, and `/note` request:
+
+- `x-rag-conversation-id`: stable session/chat identifier
+- `x-rag-message-id`: unique identifier for the current user message
+
+`rag-api` persists the counter in SQLite and returns `429` once the limit is exceeded. The response also includes:
+
+- `X-RAG-Call-Count`
+- `X-RAG-Remaining-Calls`
+- `X-RAG-Max-Calls`
+
+You can inspect or reset counters via:
+
+- `GET /agent-call-budget?conversation_id=...&message_id=...`
+- `POST /agent-call-budget/reset`
+
 ## Quick Reference
 
 ```bash
