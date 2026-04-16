@@ -108,6 +108,51 @@ class AgentCallBudgetStore:
             "remaining_calls": max(self.max_calls - call_count, 0),
         }
 
+    def decrement(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> dict[str, int]:
+        """Rollback one counted call when a request ultimately fails."""
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT call_count
+                    FROM agent_call_counters
+                    WHERE conversation_id = ? AND message_id = ?
+                    """,
+                    (conversation_id, message_id),
+                ).fetchone()
+
+                current_count = int(row["call_count"]) if row else 0
+                next_count = max(current_count - 1, 0)
+
+                if next_count == 0:
+                    conn.execute(
+                        """
+                        DELETE FROM agent_call_counters
+                        WHERE conversation_id = ? AND message_id = ?
+                        """,
+                        (conversation_id, message_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE agent_call_counters
+                        SET call_count = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE conversation_id = ? AND message_id = ?
+                        """,
+                        (next_count, conversation_id, message_id),
+                    )
+                conn.commit()
+
+        return {
+            "call_count": next_count,
+            "remaining_calls": max(self.max_calls - next_count, 0),
+        }
+
     def reset(
         self,
         conversation_id: str,

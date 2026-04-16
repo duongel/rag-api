@@ -40,9 +40,15 @@ def client(monkeypatch, budget_db_path: Path):
 
 
 def test_requests_without_headers_are_not_limited(client):
-    for _ in range(3):
-        resp = client.post("/keyword-search", json={"query": "NVR"})
-        assert resp.status_code == 200
+    resp = client.get("/health")
+    assert resp.status_code == 200
+
+
+def test_missing_headers_return_400_when_budget_is_enabled(client):
+    resp = client.post("/keyword-search", json={"query": "NVR"})
+    assert resp.status_code == 400
+    assert "x-rag-conversation-id" in resp.json()["detail"]
+    assert "x-rag-message-id" in resp.json()["detail"]
 
 
 def test_third_call_returns_429(client):
@@ -114,3 +120,19 @@ def test_budget_state_and_reset_endpoints(client):
     )
     assert state_after_reset.status_code == 200
     assert state_after_reset.json()["call_count"] == 0
+
+
+def test_failed_requests_do_not_consume_budget(client):
+    headers = {
+        "x-rag-conversation-id": "conv-4",
+        "x-rag-message-id": "msg-4",
+    }
+
+    invalid = client.post("/note", json={}, headers=headers)
+    assert invalid.status_code == 422
+    assert invalid.headers["X-RAG-Call-Count"] == "0"
+    assert invalid.headers["X-RAG-Remaining-Calls"] == "2"
+
+    valid = client.post("/keyword-search", json={"query": "NVR"}, headers=headers)
+    assert valid.status_code == 200
+    assert valid.headers["X-RAG-Call-Count"] == "1"

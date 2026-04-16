@@ -296,7 +296,15 @@ async def enforce_agent_call_budget(request: Request, call_next):
 
     conversation_id, message_id = _extract_agent_budget_scope(request)
     if not conversation_id or not message_id:
-        return await call_next(request)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": (
+                    "Agent call budget is enabled for this endpoint. "
+                    f"Provide both {AGENT_CONVERSATION_HEADER} and {AGENT_MESSAGE_HEADER} headers."
+                ),
+            },
+        )
 
     budget_state = await run_in_threadpool(
         agent_call_budget.increment_and_check,
@@ -325,7 +333,27 @@ async def enforce_agent_call_budget(request: Request, call_next):
             },
         )
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        await run_in_threadpool(
+            agent_call_budget.decrement,
+            conversation_id,
+            message_id,
+        )
+        raise
+
+    if response.status_code >= 400:
+        rollback_state = await run_in_threadpool(
+            agent_call_budget.decrement,
+            conversation_id,
+            message_id,
+        )
+        response.headers["X-RAG-Call-Count"] = str(rollback_state["call_count"])
+        response.headers["X-RAG-Remaining-Calls"] = str(rollback_state["remaining_calls"])
+        response.headers["X-RAG-Max-Calls"] = str(agent_call_budget.max_calls)
+        return response
+
     response.headers.update(headers)
     return response
 
