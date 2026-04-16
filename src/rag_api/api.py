@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Security, status as 
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .config import (
     AGENT_CONVERSATION_HEADER,
@@ -297,7 +298,11 @@ async def enforce_agent_call_budget(request: Request, call_next):
     if not conversation_id or not message_id:
         return await call_next(request)
 
-    budget_state = agent_call_budget.increment_and_check(conversation_id, message_id)
+    budget_state = await run_in_threadpool(
+        agent_call_budget.increment_and_check,
+        conversation_id,
+        message_id,
+    )
     headers = {
         "X-RAG-Call-Count": str(budget_state["call_count"]),
         "X-RAG-Remaining-Calls": str(budget_state["remaining_calls"]),

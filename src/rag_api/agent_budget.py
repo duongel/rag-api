@@ -3,7 +3,7 @@
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 class AgentCallBudgetStore:
@@ -43,7 +43,7 @@ class AgentCallBudgetStore:
         self,
         conversation_id: str,
         message_id: str,
-    ) -> dict[str, int | bool]:
+    ) -> dict[str, Union[int, bool]]:
         """Atomically increment the counter and report whether the call is allowed."""
         with self._lock:
             with self._connect() as conn:
