@@ -2,23 +2,23 @@
 
 import logging
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
+from fastapi import FastAPI, HTTPException, Query, Request, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from typing import Optional
-
-from urllib.parse import quote
 
 from .config import (
+    AGENT_CONVERSATION_HEADER,
+    AGENT_MESSAGE_HEADER,
     API_BEARER_TOKEN,
     AUTH_REQUIRED,
-    PUBLIC_URL,
-    PAPERLESS_PUBLIC_URL,
     DATA_SOURCES,
+    PAPERLESS_PUBLIC_URL,
+    PUBLIC_URL,
 )
-
 logger = logging.getLogger(__name__)
 
 # SKILL.md is copied into /app/ by the Dockerfile; fall back to repo root for local dev
@@ -44,6 +44,15 @@ indexer = None  # type: ignore[assignment]
 searcher = None  # type: ignore[assignment]
 indexing_status: dict = {"indexing": True, "indexed_files": 0, "total_files": 0}
 _bearer = HTTPBearer(auto_error=False)
+agent_call_budget = None  # type: ignore[assignment]
+
+_BUDGET_PROTECTED_PATHS = {
+    "/search",
+    "/keyword-search",
+    "/hybrid-search",
+    "/documents",
+    "/note",
+}
 
 
 def require_auth(
@@ -128,6 +137,23 @@ class StatusResponse(BaseModel):
 class ReindexResponse(BaseModel):
     updated_files: int
     message: str
+
+
+class AgentBudgetStateResponse(BaseModel):
+    conversation_id: str
+    message_id: str
+    call_count: int
+    remaining_calls: int
+    max_calls: int
+
+
+class AgentBudgetResetRequest(BaseModel):
+    conversation_id: str
+    message_id: Optional[str] = None
+
+
+class AgentBudgetResetResponse(BaseModel):
+    deleted_counters: int
 
 
 class DocumentsRequest(BaseModel):
@@ -244,6 +270,61 @@ def _require_paperless_filter(req: DocumentsRequest) -> None:
     )
 
 
+def _extract_agent_budget_scope(request: Request) -> tuple[Optional[str], Optional[str]]:
+    """Read the configured agent conversation/message headers from the request."""
+    conversation_id = request.headers.get(AGENT_CONVERSATION_HEADER)
+    message_id = request.headers.get(AGENT_MESSAGE_HEADER)
+
+    if conversation_id is not None:
+        conversation_id = conversation_id.strip()
+    if message_id is not None:
+        message_id = message_id.strip()
+
+    return conversation_id or None, message_id or None
+
+
+@app.middleware("http")
+async def enforce_agent_call_budget(request: Request, call_next):
+    """Track and optionally cap per-message agent API calls."""
+    if (
+        agent_call_budget is None
+        or not agent_call_budget.is_enabled()
+        or request.url.path not in _BUDGET_PROTECTED_PATHS
+    ):
+        return await call_next(request)
+
+    conversation_id, message_id = _extract_agent_budget_scope(request)
+    if not conversation_id or not message_id:
+        return await call_next(request)
+
+    budget_state = agent_call_budget.increment_and_check(conversation_id, message_id)
+    headers = {
+        "X-RAG-Call-Count": str(budget_state["call_count"]),
+        "X-RAG-Remaining-Calls": str(budget_state["remaining_calls"]),
+        "X-RAG-Max-Calls": str(agent_call_budget.max_calls),
+    }
+    if not bool(budget_state["allowed"]):
+        return JSONResponse(
+            status_code=429,
+            headers=headers,
+            content={
+                "detail": (
+                    "Agent call budget exceeded for this user message. "
+                    f"Limit: {agent_call_budget.max_calls} calls."
+                ),
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "call_count": budget_state["call_count"],
+                "remaining_calls": budget_state["remaining_calls"],
+                "max_calls": agent_call_budget.max_calls,
+            },
+        )
+
+    response = await call_next(request)
+    response.headers.update(headers)
+    return response
+
+
 # ── endpoints ────────────────────────────────────────────────────────────
 
 
@@ -306,6 +387,51 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
     )
     results = [_enrich_source_url(r) for r in results]
     return SearchResponse(results=results, count=len(results))
+
+
+@app.get(
+    "/agent-call-budget",
+    response_model=AgentBudgetStateResponse,
+    summary="Get agent call budget state",
+)
+def get_agent_call_budget_state(
+    conversation_id: str = Query(..., description="Conversation identifier used by the agent."),
+    message_id: str = Query(..., description="User message identifier used by the agent."),
+    _: None = Security(require_auth),
+):
+    """Return the persisted call counter for one conversation/message pair."""
+    if agent_call_budget is None or not agent_call_budget.is_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Agent call budget is not enabled.",
+        )
+    state = agent_call_budget.get(conversation_id, message_id)
+    return AgentBudgetStateResponse(
+        conversation_id=conversation_id,
+        message_id=message_id,
+        call_count=state["call_count"],
+        remaining_calls=state["remaining_calls"],
+        max_calls=agent_call_budget.max_calls,
+    )
+
+
+@app.post(
+    "/agent-call-budget/reset",
+    response_model=AgentBudgetResetResponse,
+    summary="Reset agent call budget counters",
+)
+def reset_agent_call_budget(
+    req: AgentBudgetResetRequest,
+    _: None = Security(require_auth),
+):
+    """Delete persisted counters for one conversation or one specific message."""
+    if agent_call_budget is None or not agent_call_budget.is_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Agent call budget is not enabled.",
+        )
+    deleted = agent_call_budget.reset(req.conversation_id, req.message_id)
+    return AgentBudgetResetResponse(deleted_counters=deleted)
 
 
 @app.post(

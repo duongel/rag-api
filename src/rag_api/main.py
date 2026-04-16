@@ -11,11 +11,14 @@ import requests
 import uvicorn
 
 from .config import (
+    AGENT_COUNTER_DB_PATH,
+    AGENT_MAX_CALLS_PER_MESSAGE,
     OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN,
     OLLAMA_TIMEOUT_SECONDS,
     DATA_SOURCES, VAULT_PATH,
     PAPERLESS_URL, PAPERLESS_TOKEN, RAG_API_INTERNAL_URL,
 )
+from .agent_budget import AgentCallBudgetStore
 from .indexer import Indexer
 from .search import Searcher
 from .watcher import start_watcher
@@ -191,6 +194,18 @@ def main():
     # inject into FastAPI module
     api.indexer = indexer
     api.searcher = search
+    if AGENT_MAX_CALLS_PER_MESSAGE > 0:
+        logger.info(
+            "Enabling persistent agent call budget: %d calls/message (%s)",
+            AGENT_MAX_CALLS_PER_MESSAGE,
+            AGENT_COUNTER_DB_PATH,
+        )
+        api.agent_call_budget = AgentCallBudgetStore(
+            AGENT_COUNTER_DB_PATH,
+            AGENT_MAX_CALLS_PER_MESSAGE,
+        )
+    else:
+        api.agent_call_budget = None
     api.indexing_status = {
         "indexing": _INDEX_OBSIDIAN or _INDEX_PAPERLESS,
         "indexed_files": 0,
