@@ -28,6 +28,31 @@ _PRIORITY: dict[str, int] = {
     "link_1": 0, "backlink": 1, "tag": 2, "link_2": 3,
 }
 
+# German words signalling that the newest matching document is wanted.
+# When any of these appears in a query, date-sorting is enabled
+# automatically so small LLMs don't have to set ``sort_by_date`` manually.
+_RECENCY_TRIGGERS: set = {
+    "zuletzt", "letzte", "letzten", "letztes", "letzter",
+    "neueste", "neuesten", "neuester", "neuestes", "neueres",
+    "neuste", "neusten", "neuster", "neustes",
+    "aktuell", "aktuelle", "aktuellen", "aktuellste", "aktuellsten",
+    "jüngste", "jüngsten", "jüngster",
+}
+
+# Strip only leading/trailing punctuation so recency words are matched
+# regardless of surrounding commas or question marks.
+_RECENCY_PUNCT = "?!.,;:\"'()[]{}«»"
+
+
+def _query_requests_recency(query: str) -> bool:
+    """Return True when *query* contains a word asking for the newest match."""
+    if not query:
+        return False
+    for word in query.lower().split():
+        if word.strip(_RECENCY_PUNCT) in _RECENCY_TRIGGERS:
+            return True
+    return False
+
 
 class Searcher:
     def __init__(self, indexer: Indexer):
@@ -58,6 +83,7 @@ class Searcher:
         queries like "letzte Rechnung" where recency matters more than
         marginal score differences.
         """
+        sort_by_date = sort_by_date or _query_requests_recency(query)
         query_embedding = embed_query(query)
 
         where = _build_chromadb_filters(
@@ -203,6 +229,16 @@ class Searcher:
         "zu", "zum", "zur", "alle", "wann", "war", "were", "vom",
         "suche", "summiere", "zeige", "finde", "liste",
         "habe", "hab", "viel",
+        # Question / filler words that carry no retrieval signal
+        "welches", "welche", "welcher", "welchen", "welchem",
+        "mein", "meine", "meinen", "meinem", "meiner", "meins",
+        "wieviel", "wieviele",
+        # Recency words are handled by _query_requests_recency, so they
+        # must not pollute the keyword-matching content words.
+        "zuletzt", "letzte", "letzten", "letztes", "letzter",
+        "neueste", "neuesten", "neuester", "neuestes",
+        "neuste", "neusten", "aktuell", "aktuelle", "aktuellste",
+        "jüngste", "jüngsten",
     }
 
     # German query-term expansion for hybrid search.  When a content
@@ -222,6 +258,12 @@ class Searcher:
         "summe": ["gesamtbetrag", "gesamtbeitrag", "rechnung", "beitrag"],
         "gesamt": ["gesamtbetrag", "gesamtbeitrag", "summe"],
         "insgesamt": ["gesamtbetrag", "gesamtbeitrag", "summe", "rechnung"],
+        "kauf": ["rechnung", "kaufvertrag", "bestellung", "quittung", "beleg"],
+        "gekauft": ["kauf", "rechnung", "bestellung", "quittung"],
+        "bestellung": ["rechnung", "kauf", "auftragsbestätigung", "lieferung"],
+        "fahrrad": ["bike", "e-bike", "pedelec", "rad", "mountainbike", "fahrräder"],
+        "bike": ["fahrrad", "e-bike", "pedelec", "rad"],
+        "e-bike": ["fahrrad", "pedelec", "bike"],
     }
 
     def hybrid_search(
@@ -245,6 +287,7 @@ class Searcher:
         for exact term coverage and additional synonym coverage. Exact
         matches are never penalized for not containing all synonyms.
         """
+        sort_by_date = sort_by_date or _query_requests_recency(query)
         # When sorting by date we need wider candidate pools so that
         # truly newest documents are captured even when they aren't
         # among the top-k most relevant results.
