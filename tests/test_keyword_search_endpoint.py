@@ -71,6 +71,28 @@ class TestQueryEndpointRedirects:
         assert "query" in str(resp.json()["detail"]).lower()
         _patch_searcher.list_documents.assert_not_called()
 
+    @pytest.mark.parametrize("endpoint", ["/search", "/hybrid-search", "/keyword-search"])
+    def test_filter_only_without_top_k_returns_full_set(self, client, _patch_searcher, endpoint):
+        _patch_searcher.list_documents.return_value = [
+            {
+                "file_path": f"paperless/{i}.pdf",
+                "section": "",
+                "content": "",
+                "score": 1.0,
+                "match_type": "content",
+                "source": "paperless",
+                "created": "2026-04-10",
+            }
+            for i in range(17)
+        ]
+
+        resp = client.post(endpoint, json={"paperless_tags": ["sommer_urlaub2026"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 17
+        assert body["total"] == 17
+
 
 class TestKeywordSearchEndpoint:
     def test_query_still_works(self, client, _patch_searcher):

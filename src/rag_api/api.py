@@ -85,7 +85,7 @@ def _coerce_tags_to_list(value):
 
 class SearchRequest(BaseModel):
     query: Optional[str] = None
-    top_k: int = 5
+    top_k: Optional[int] = Field(None, ge=1)  # search default 5; listing default 100
     expand_links: bool = True
     min_score: float = 0.0  # filter results below this threshold
     sort_by_date: bool = False  # sort results newest-first instead of by score
@@ -278,7 +278,8 @@ def _list_documents_response(req: SearchRequest) -> SearchResponse:
         sort_by_date=req.sort_by_date,
     )
     total = len(all_results)
-    results = [_enrich_source_url(r) for r in all_results[: req.top_k]]
+    limit = req.top_k or 100  # metadata listing returns the full set by default
+    results = [_enrich_source_url(r) for r in all_results[:limit]]
     return SearchResponse(results=results, count=len(results), total=total)
 
 
@@ -367,7 +368,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
     if redirect is not None:
         return redirect
     results = searcher.semantic_search(
-        req.query.strip(), req.top_k, req.expand_links,
+        req.query.strip(), req.top_k or 5, req.expand_links,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
@@ -402,7 +403,7 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     if redirect is not None:
         return redirect
     results = searcher.keyword_search(
-        req.query.strip(), req.top_k,
+        req.query.strip(), req.top_k or 5,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
@@ -480,7 +481,7 @@ def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
     if redirect is not None:
         return redirect
     results = searcher.hybrid_search(
-        req.query.strip(), req.top_k,
+        req.query.strip(), req.top_k or 5,
         expand_links=req.expand_links,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
