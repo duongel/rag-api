@@ -84,7 +84,7 @@ def _coerce_tags_to_list(value):
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: Optional[str] = None
     top_k: int = 5
     expand_links: bool = True
     min_score: float = 0.0  # filter results below this threshold
@@ -262,6 +262,54 @@ def _require_paperless_filter(req: DocumentsRequest) -> None:
     )
 
 
+def _list_documents_response(req: SearchRequest) -> SearchResponse:
+    """Run the metadata-only Paperless listing and wrap it as a SearchResponse."""
+    tags, correspondent, year, document_type = _normalize_paperless_filters(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    )
+    all_results = searcher.list_documents(
+        paperless_tags=tags,
+        paperless_correspondent=correspondent,
+        paperless_created_year=year,
+        paperless_document_type=document_type,
+        sort_by_date=req.sort_by_date,
+    )
+    total = len(all_results)
+    results = [_enrich_source_url(r) for r in all_results[: req.top_k]]
+    return SearchResponse(results=results, count=len(results), total=total)
+
+
+def _resolve_query_or_redirect(req: SearchRequest) -> Optional[SearchResponse]:
+    """Guard for the query-based endpoints.
+
+    Returns a ready ``SearchResponse`` when the request has no usable query
+    but does carry effective Paperless filters — in that case the request is
+    transparently served as a metadata-only ``/documents`` listing instead of
+    failing with a 422. Returns ``None`` when a real query is present (the
+    caller should run its normal search). Raises 422 when neither a query nor
+    a filter is provided.
+    """
+    if (req.query or "").strip():
+        return None
+    if _has_paperless_filter(
+        req.paperless_tags,
+        req.paperless_correspondent,
+        req.paperless_created_year,
+        req.paperless_document_type,
+    ):
+        return _list_documents_response(req)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "query must not be empty. Provide a `query`, or set a paperless_* "
+            "filter to list documents by metadata."
+        ),
+    )
+
+
 # ── endpoints ────────────────────────────────────────────────────────────
 
 
@@ -308,13 +356,18 @@ def stats(_: None = Security(require_auth)):
         "instead of by score. Useful for queries like 'letzte Rechnung'.\n\n"
         "**Use for:** conceptual questions, topics, explanations.\n\n"
         "**Do NOT use for:** abbreviations, URLs, exact class/enum names \u2192 use `/keyword-search`.\n\n"
+        "If `query` is omitted/empty but a `paperless_*` filter is set, this behaves like "
+        "`/documents` (metadata-only listing) instead of failing.\n\n"
         "Set `min_score: 0.70` to suppress low-confidence results."
     ),
 )
 def search(req: SearchRequest, _: None = Security(require_auth)):
     """Semantic similarity search across all indexed notes."""
+    redirect = _resolve_query_or_redirect(req)
+    if redirect is not None:
+        return redirect
     results = searcher.semantic_search(
-        req.query, req.top_k, req.expand_links,
+        req.query.strip(), req.top_k, req.expand_links,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
@@ -338,13 +391,18 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         "config keys (`VAULT_PATH`), class names, enum values, "
         "or any query where the exact string must appear in the note.\n\n"
         "**Filter-only Paperless listing:** use `/documents`.\n\n"
+        "If `query` is omitted/empty but a `paperless_*` filter is set, this behaves like "
+        "`/documents` (metadata-only listing) instead of failing.\n\n"
         "**Do NOT use for:** conceptual questions, topics, explanations → use `/search`."
     ),
 )
 def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
     """Exact keyword search in filenames and note content."""
+    redirect = _resolve_query_or_redirect(req)
+    if redirect is not None:
+        return redirect
     results = searcher.keyword_search(
-        _require_non_empty_query(req.query), req.top_k,
+        req.query.strip(), req.top_k,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
@@ -411,13 +469,18 @@ def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
         "Best for natural-language queries that contain specific identifiers, "
         "e.g. 'Kaufvertrag Grundstück Montabaur' or 'Rechnung Audi e-tron 2025'.\n\n"
         "Results are ranked by score (highest first) unless `sort_by_date: true` is set.\n\n"
+        "If `query` is omitted/empty but a `paperless_*` filter is set, this behaves like "
+        "`/documents` (metadata-only listing) instead of failing.\n\n"
         "Supports all Paperless filters and `min_score` threshold."
     ),
 )
 def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
     """Combined semantic + keyword search with deduplication."""
+    redirect = _resolve_query_or_redirect(req)
+    if redirect is not None:
+        return redirect
     results = searcher.hybrid_search(
-        req.query, req.top_k,
+        req.query.strip(), req.top_k,
         expand_links=req.expand_links,
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
