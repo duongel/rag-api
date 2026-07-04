@@ -264,6 +264,10 @@ class Searcher:
         "fahrrad": ["bike", "e-bike", "pedelec", "rad", "mountainbike", "fahrräder"],
         "bike": ["fahrrad", "e-bike", "pedelec", "rad"],
         "e-bike": ["fahrrad", "pedelec", "bike"],
+        "reisepass": ["pass", "reisepässe", "ausweis", "personalausweis", "urkunde"],
+        "pass": ["reisepass", "ausweis", "personalausweis"],
+        "ausweis": ["personalausweis", "reisepass", "pass", "ausweisdokument"],
+        "personalausweis": ["ausweis", "reisepass", "pass"],
     }
 
     def hybrid_search(
