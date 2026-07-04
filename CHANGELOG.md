@@ -1,3 +1,10 @@
+## [1.12.4](https://github.com/duongel/rag-api/compare/v1.12.3...v1.12.4) (2026-07-04)
+
+
+### Bug Fixes
+
+* **api:** redirect query-less filter requests to document listing ([4e858f0](https://github.com/duongel/rag-api/commit/4e858f0029316d0674b3a628ddd506c2b117b173))
+
 ## [1.12.3](https://github.com/duongel/rag-api/compare/v1.12.2...v1.12.3) (2026-07-04)
 
 
