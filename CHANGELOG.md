@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/duongel/rag-api/compare/v1.13.0...v1.14.0) (2026-07-04)
+
+
+### Features
+
+* **search:** expand ID-document synonyms (reisepass/ausweis) ([361bc83](https://github.com/duongel/rag-api/commit/361bc8335f9c1641e78c2a3ca12d575675f7687b))
+
 # [1.13.0](https://github.com/duongel/rag-api/compare/v1.12.5...v1.13.0) (2026-07-04)
 
 
