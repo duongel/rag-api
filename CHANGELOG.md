@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/duongel/rag-api/compare/v1.12.0...v1.12.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **indexing:** auto-pull embedding model when missing ([41e4497](https://github.com/duongel/rag-api/commit/41e449709bdbe80e7af16dcdb257693f47824f25))
+
 # [1.12.0](https://github.com/duongel/rag-api/compare/v1.11.3...v1.12.0) (2026-04-15)
 
 
