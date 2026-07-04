@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/duongel/rag-api/compare/v1.12.5...v1.13.0) (2026-07-04)
+
+
+### Features
+
+* **search:** auto-enable date sort on recency queries ([f1d1ce5](https://github.com/duongel/rag-api/commit/f1d1ce50c203fb8d54731d8ded7777b250a0e76f))
+
 ## [1.12.5](https://github.com/duongel/rag-api/compare/v1.12.4...v1.12.5) (2026-07-04)
 
 
