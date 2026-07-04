@@ -93,6 +93,10 @@ class SearchRequest(BaseModel):
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
     paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+    # Cap the ``content`` field of each result to this many characters.
+    # Smaller values keep agent context (and llama.cpp prefill) small on
+    # multi-turn tool use. None keeps the full indexed snippet.
+    max_content_chars: Optional[int] = Field(None, ge=1)
 
     _coerce_tags = field_validator("paperless_tags", mode="before")(_coerce_tags_to_list)
 
@@ -153,11 +157,26 @@ class DocumentsRequest(BaseModel):
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
     paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+    max_content_chars: Optional[int] = Field(None, ge=1)  # cap per-result content length
 
     _coerce_tags = field_validator("paperless_tags", mode="before")(_coerce_tags_to_list)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
+
+def _truncate_content(result: dict, max_chars: Optional[int]) -> dict:
+    """Shorten a result's ``content`` to *max_chars* when requested.
+
+    Keeps agent context and llama.cpp prefill small during multi-turn
+    tool use. A no-op when *max_chars* is None or the content already fits.
+    """
+    if max_chars is None:
+        return result
+    content = result.get("content") or ""
+    if len(content) > max_chars:
+        result["content"] = content[:max_chars]
+    return result
+
 
 def _enrich_source_url(result: dict) -> dict:
     """Add a source_url to a result dict so callers can jump directly to the document."""
@@ -279,7 +298,10 @@ def _list_documents_response(req: SearchRequest) -> SearchResponse:
     )
     total = len(all_results)
     limit = req.top_k or 100  # metadata listing returns the full set by default
-    results = [_enrich_source_url(r) for r in all_results[:limit]]
+    results = [
+        _truncate_content(_enrich_source_url(r), req.max_content_chars)
+        for r in all_results[:limit]
+    ]
     return SearchResponse(results=results, count=len(results), total=total)
 
 
@@ -376,7 +398,10 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         sort_by_date=req.sort_by_date,
         min_score=req.min_score,
     )
-    results = [_enrich_source_url(r) for r in results]
+    results = [
+        _truncate_content(_enrich_source_url(r), req.max_content_chars)
+        for r in results
+    ]
     return SearchResponse(results=results, count=len(results), total=len(results))
 
 
@@ -409,7 +434,10 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_created_year=req.paperless_created_year,
         paperless_document_type=req.paperless_document_type,
     )
-    results = [_enrich_source_url(r) for r in results]
+    results = [
+        _truncate_content(_enrich_source_url(r), req.max_content_chars)
+        for r in results
+    ]
     return SearchResponse(results=results, count=len(results), total=len(results))
 
 
@@ -447,6 +475,7 @@ def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
         paperless_correspondent=paperless_correspondent,
         paperless_created_year=paperless_created_year,
         paperless_document_type=paperless_document_type,
+        max_content_chars=req.max_content_chars,
     )
     _require_paperless_filter(req)
     all_results = searcher.list_documents(
@@ -457,7 +486,10 @@ def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
         sort_by_date=req.sort_by_date,
     )
     total = len(all_results)
-    results = [_enrich_source_url(r) for r in all_results[: req.top_k]]
+    results = [
+        _truncate_content(_enrich_source_url(r), req.max_content_chars)
+        for r in all_results[: req.top_k]
+    ]
     return SearchResponse(results=results, count=len(results), total=total)
 
 
@@ -490,7 +522,10 @@ def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
         sort_by_date=req.sort_by_date,
         min_score=req.min_score,
     )
-    results = [_enrich_source_url(r) for r in results]
+    results = [
+        _truncate_content(_enrich_source_url(r), req.max_content_chars)
+        for r in results
+    ]
     return SearchResponse(results=results, count=len(results), total=len(results))
 
 
