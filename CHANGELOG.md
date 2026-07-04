@@ -1,3 +1,10 @@
+## [1.12.5](https://github.com/duongel/rag-api/compare/v1.12.4...v1.12.5) (2026-07-04)
+
+
+### Bug Fixes
+
+* **api:** full result set for query-less filter redirects ([5485f47](https://github.com/duongel/rag-api/commit/5485f47492a1dd98e34fb1ae5c36ede499845482))
+
 ## [1.12.4](https://github.com/duongel/rag-api/compare/v1.12.3...v1.12.4) (2026-07-04)
 
 
