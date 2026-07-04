@@ -5,6 +5,14 @@ CHROMA_PATH = os.environ.get("CHROMA_PATH", "/app/data/chroma")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT_SECONDS = int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+
+# When the embedding model is missing from Ollama, pull it automatically via
+# the Ollama API instead of failing. This makes setups that point at an
+# external/shared Ollama work out of the box (the model no longer has to be
+# pulled manually beforehand).
+EMBED_MODEL_AUTO_PULL = os.environ.get("EMBED_MODEL_AUTO_PULL", "true").lower() in {"1", "true", "yes", "on"}
+# Maximum time to wait for a model pull to finish (seconds).
+EMBED_MODEL_PULL_TIMEOUT_SECONDS = int(os.environ.get("EMBED_MODEL_PULL_TIMEOUT_SECONDS", "600"))
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8484")
 API_BEARER_TOKEN = os.environ.get("API_BEARER_TOKEN", "")
 AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "true").lower() in {"1", "true", "yes", "on"}

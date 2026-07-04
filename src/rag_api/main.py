@@ -1,6 +1,7 @@
 """Entry-point: waits for Ollama, indexes vault in background, starts watcher + API."""
 
 import logging
+import json
 import threading
 import time
 import secrets
@@ -12,7 +13,7 @@ import uvicorn
 
 from .config import (
     OLLAMA_URL, EMBED_MODEL, API_PORT, AUTH_REQUIRED, API_BEARER_TOKEN,
-    OLLAMA_TIMEOUT_SECONDS,
+    OLLAMA_TIMEOUT_SECONDS, EMBED_MODEL_AUTO_PULL, EMBED_MODEL_PULL_TIMEOUT_SECONDS,
     DATA_SOURCES, VAULT_PATH,
     PAPERLESS_URL, PAPERLESS_TOKEN, RAG_API_INTERNAL_URL,
 )
@@ -31,12 +32,54 @@ _INDEX_OBSIDIAN = DATA_SOURCES in ("obsidian", "all")
 _INDEX_PAPERLESS = DATA_SOURCES in ("paperless", "all") and bool(PAPERLESS_URL) and bool(PAPERLESS_TOKEN)
 
 
+def _pull_model() -> bool:
+    """Pull the embedding model into Ollama via the /api/pull endpoint.
+
+    Streams pull progress and logs status updates. Returns True on success.
+    Best-effort: any failure is logged and returns False so the caller can
+    keep retrying within the overall readiness timeout.
+    """
+    logger.info("Pulling embedding model '%s' into Ollama at %s …", EMBED_MODEL, OLLAMA_URL)
+    try:
+        resp = requests.post(
+            f"{OLLAMA_URL}/api/pull",
+            json={"model": EMBED_MODEL, "stream": True},
+            stream=True,
+            timeout=EMBED_MODEL_PULL_TIMEOUT_SECONDS,
+        )
+        if not resp.ok:
+            logger.warning("Model pull request failed (HTTP %d): %s", resp.status_code, resp.text[:200])
+            return False
+
+        last_status = ""
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
+            if payload.get("error"):
+                logger.warning("Model pull error: %s", payload["error"])
+                return False
+            status = payload.get("status", "")
+            if status and status != last_status:
+                logger.info("  pull: %s", status)
+                last_status = status
+        logger.info("Model '%s' pulled successfully.", EMBED_MODEL)
+        return True
+    except Exception as exc:
+        logger.warning("Model pull failed: %s", exc)
+        return False
+
+
 def _wait_for_ollama():
     """Block until Ollama is reachable and the embedding model is available."""
     logger.info("Waiting for Ollama at %s …", OLLAMA_URL)
     started = time.monotonic()
     last_error = ""
     last_models: list[str] = []
+    pull_attempted = False
     while True:
         try:
             resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
@@ -45,6 +88,13 @@ def _wait_for_ollama():
                 if any(EMBED_MODEL in m for m in last_models):
                     logger.info("Ollama ready – model '%s' available.", EMBED_MODEL)
                     return
+                # Ollama is reachable but the embedding model is missing.
+                # Pull it automatically so external/shared Ollama instances
+                # work without a manual `ollama pull` step.
+                if EMBED_MODEL_AUTO_PULL and not pull_attempted:
+                    pull_attempted = True
+                    if _pull_model():
+                        continue
                 logger.info(
                     "Model '%s' not yet available. Available: %s – retrying …",
                     EMBED_MODEL,
