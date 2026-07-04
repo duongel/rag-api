@@ -133,7 +133,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
       "parameters": {
         "type": "object",
         "properties": {
-          "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 10 },
+          "top_k": { "type": "integer", "description": "Maximum number of results. Defaults to 100 so the full match set is returned; the response `total` reports how many matched before truncation.", "default": 100 },
           "sort_by_date": { "type": "boolean", "description": "Sort newest first.", "default": true },
           "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
           "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
@@ -238,7 +238,7 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
     "input_schema": {
       "type": "object",
       "properties": {
-        "top_k": { "type": "integer", "default": 10 },
+        "top_k": { "type": "integer", "default": 100 },
         "sort_by_date": { "type": "boolean", "default": true },
         "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by Paperless tag names." },
         "paperless_correspondent": { "type": "string", "description": "Filter by Paperless correspondent." },
@@ -524,7 +524,8 @@ curl -s http://127.0.0.1:8484/search \
       "match_type": "link_1"
     }
   ],
-  "count": 2
+  "count": 2,
+  "total": 2
 }
 ```
 
@@ -538,6 +539,8 @@ curl -s http://127.0.0.1:8484/search \
 | `link_2` | Link of a link |
 
 **Score note:** Results with `score < 0.70` are usually not relevant (no real match). If `count: 0` → try keyword search.
+
+**`count` vs `total`:** `count` is the number of results in this response; `total` is how many matched before `top_k` truncation. On `/documents`, if `count < total`, raise `top_k` to retrieve the rest.
 
 ### 2. Keyword Search
 

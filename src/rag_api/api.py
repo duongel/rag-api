@@ -110,7 +110,8 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     results: list[SearchResult]
-    count: int
+    count: int  # number of results returned in this response
+    total: int = 0  # total matches available before top_k truncation
 
 
 class NoteResponse(BaseModel):
@@ -146,7 +147,7 @@ class ReindexResponse(BaseModel):
 
 
 class DocumentsRequest(BaseModel):
-    top_k: int = Field(10, ge=1)
+    top_k: int = Field(100, ge=1)  # metadata listing: return the full match set by default
     sort_by_date: bool = True
     paperless_tags: Optional[list[str]] = None
     paperless_correspondent: Optional[str] = None
@@ -322,7 +323,7 @@ def search(req: SearchRequest, _: None = Security(require_auth)):
         min_score=req.min_score,
     )
     results = [_enrich_source_url(r) for r in results]
-    return SearchResponse(results=results, count=len(results))
+    return SearchResponse(results=results, count=len(results), total=len(results))
 
 
 @app.post(
@@ -350,7 +351,7 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
         paperless_document_type=req.paperless_document_type,
     )
     results = [_enrich_source_url(r) for r in results]
-    return SearchResponse(results=results, count=len(results))
+    return SearchResponse(results=results, count=len(results), total=len(results))
 
 
 @app.post(
@@ -361,7 +362,10 @@ def keyword_search(req: SearchRequest, _: None = Security(require_auth)):
         "Lists Paperless documents using metadata-only filters such as tags, correspondent, "
         "creation year, and document type.\n\n"
         "Use this when you want filter-only Paperless retrieval without providing a text query.\n\n"
-        "At least one `paperless_*` filter is required."
+        "At least one `paperless_*` filter is required.\n\n"
+        "Returns the full match set by default (`top_k` defaults to 100). The response `total` "
+        "field reports how many documents matched before truncation; if `count < total`, raise "
+        "`top_k` to see the rest."
     ),
 )
 def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
@@ -386,16 +390,16 @@ def list_documents(req: DocumentsRequest, _: None = Security(require_auth)):
         paperless_document_type=paperless_document_type,
     )
     _require_paperless_filter(req)
-    results = searcher.list_documents(
-        req.top_k,
+    all_results = searcher.list_documents(
         paperless_tags=req.paperless_tags,
         paperless_correspondent=req.paperless_correspondent,
         paperless_created_year=req.paperless_created_year,
         paperless_document_type=req.paperless_document_type,
         sort_by_date=req.sort_by_date,
     )
-    results = [_enrich_source_url(r) for r in results]
-    return SearchResponse(results=results, count=len(results))
+    total = len(all_results)
+    results = [_enrich_source_url(r) for r in all_results[: req.top_k]]
+    return SearchResponse(results=results, count=len(results), total=total)
 
 
 @app.post(
@@ -423,7 +427,7 @@ def hybrid_search(req: SearchRequest, _: None = Security(require_auth)):
         min_score=req.min_score,
     )
     results = [_enrich_source_url(r) for r in results]
-    return SearchResponse(results=results, count=len(results))
+    return SearchResponse(results=results, count=len(results), total=len(results))
 
 
 @app.get(
