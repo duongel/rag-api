@@ -73,6 +73,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
         "properties": {
           "query": { "type": "string", "description": "Natural-language search query." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
+          "max_content_chars": { "type": "integer", "description": "Cap each result content to N characters. Use ~300 to keep agent context and prefill small on small local LLMs." },
           "expand_links": { "type": "boolean", "description": "Include graph-boosted related notes via wikilinks, backlinks, and tags.", "default": true },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
           "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date instead of by score. Useful for queries like 'latest invoice'. Auto-enabled when the query contains recency words (zuletzt, letzte, neueste, aktuellste, jüngste).", "default": false },
@@ -95,6 +96,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
         "properties": {
           "query": { "type": "string", "description": "Natural-language search query." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
+          "max_content_chars": { "type": "integer", "description": "Cap each result content to N characters. Use ~300 to keep agent context and prefill small on small local LLMs." },
           "min_score": { "type": "number", "description": "Optional minimum relevance threshold. Recommended 0.70 for precise questions." },
           "sort_by_date": { "type": "boolean", "description": "Sort newest-first by creation date instead of by score. Useful for queries like 'latest invoice'. Auto-enabled when the query contains recency words (zuletzt, letzte, neueste, aktuellste, jüngste).", "default": false },
           "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by tag names (exact match, case-insensitive)." },
@@ -116,6 +118,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
         "properties": {
           "query": { "type": "string", "description": "Exact search string." },
           "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 5 },
+          "max_content_chars": { "type": "integer", "description": "Cap each result content to N characters. Use ~300 to keep agent context and prefill small on small local LLMs." },
           "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by tag names (exact match, case-insensitive)." },
           "paperless_correspondent": { "type": "string", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
           "paperless_created_year": { "type": "integer", "description": "⚠️ Excludes Obsidian results! Filter Paperless documents by creation year." },
