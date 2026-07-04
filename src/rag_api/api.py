@@ -1,12 +1,13 @@
 """FastAPI REST API for the RAG API."""
 
 import logging
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 from urllib.parse import quote
@@ -511,8 +512,20 @@ def reindex(_: None = Security(require_auth)):
 
 
 class PaperlessWebhookPayload(BaseModel):
-    document_id: int
+    # Paperless workflow webhooks cannot send the raw document id — the only
+    # document identifier available to the template is ``doc_url``. We therefore
+    # accept either ``document_id`` directly or derive it from ``doc_url``.
+    document_id: Optional[int] = None
+    doc_url: Optional[str] = None
     action: str = ""  # "added", "updated", "deleted"
+
+    @model_validator(mode="after")
+    def _resolve_document_id(self) -> "PaperlessWebhookPayload":
+        if self.document_id is None and self.doc_url:
+            match = re.search(r"/documents/(\d+)", self.doc_url)
+            if match:
+                self.document_id = int(match.group(1))
+        return self
 
 
 @app.post("/webhook/paperless", summary="Paperless document webhook", include_in_schema=False)
@@ -520,9 +533,16 @@ def paperless_webhook(payload: PaperlessWebhookPayload, _: None = Security(requi
     """Receives notifications from Paperless when documents change.
 
     The webhook is auto-registered at startup so no manual configuration
-    is needed.  Accepts ``{"document_id": 123, "action": "added"}`` etc.
+    is needed.  Accepts ``{"document_id": 123, "action": "added"}`` or a
+    Paperless workflow payload such as
+    ``{"doc_url": "https://paperless/documents/123/", "action": "updated"}``.
     """
     doc_id = payload.document_id
+    if doc_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Webhook payload must include 'document_id' or a 'doc_url' containing /documents/<id>/.",
+        )
     action = payload.action.lower()
 
     if action == "deleted":
