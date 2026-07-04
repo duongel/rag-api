@@ -133,7 +133,7 @@ Also used by: **Mistral**, **Groq**, **Together AI**, **Ollama**, **Azure OpenAI
       "parameters": {
         "type": "object",
         "properties": {
-          "top_k": { "type": "integer", "description": "Maximum number of results.", "default": 10 },
+          "top_k": { "type": "integer", "description": "Maximum number of results. Defaults to 100 so the full match set is returned; the response `total` reports how many matched before truncation.", "default": 100 },
           "sort_by_date": { "type": "boolean", "description": "Sort newest first.", "default": true },
           "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter Paperless documents by tag names (exact match, case-insensitive)." },
           "paperless_correspondent": { "type": "string", "description": "Filter Paperless documents by correspondent name (exact match, case-insensitive)." },
@@ -238,7 +238,7 @@ This format is for Claude/Anthropic setups that expect tools with `name`, `descr
     "input_schema": {
       "type": "object",
       "properties": {
-        "top_k": { "type": "integer", "default": 10 },
+        "top_k": { "type": "integer", "default": 100 },
         "sort_by_date": { "type": "boolean", "default": true },
         "paperless_tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by Paperless tag names." },
         "paperless_correspondent": { "type": "string", "description": "Filter by Paperless correspondent." },
@@ -524,7 +524,8 @@ curl -s http://127.0.0.1:8484/search \
       "match_type": "link_1"
     }
   ],
-  "count": 2
+  "count": 2,
+  "total": 2
 }
 ```
 
@@ -538,6 +539,8 @@ curl -s http://127.0.0.1:8484/search \
 | `link_2` | Link of a link |
 
 **Score note:** Results with `score < 0.70` are usually not relevant (no real match). If `count: 0` → try keyword search.
+
+**`count` vs `total`:** `count` is the number of results in this response; `total` is how many matched before `top_k` truncation. On `/documents`, if `count < total`, raise `top_k` to retrieve the rest.
 
 ### 2. Keyword Search
 
@@ -669,14 +672,18 @@ curl -s http://127.0.0.1:8484/health
 | Class names, enum values | `/keyword-search` | `"SensorType"`, `"ContentType"` |
 | Broad topic with context | `/search` with `top_k: 10` | "Everything about network segmentation" |
 | Specific file known | `/note` | direct path |
-| Latest or newest Paperless docs | `paperless_*` filters first, then `/search` or `/hybrid-search` with `sort_by_date: true` | `"letzte Rechnung"` |
-| Paperless docs by tag/year/correspondent/type | `paperless_*` filters first, then `/search` or `/hybrid-search` | `paperless_tags: ["etron"]` |
+| Latest or newest Paperless docs (no search terms) | `/documents` with `sort_by_date: true` | `"letzte Rechnung"` → `paperless_document_type: "Rechnung"` |
+| Latest Paperless docs matching search terms | `paperless_*` filters + `/search` or `/hybrid-search` with `sort_by_date: true` | `"letzte Rechnung Telekom Internet"` |
+| Paperless docs by tag/year/correspondent/type (no search terms) | `/documents` — **filter-only, needs no `query`** | `paperless_tags: ["etron"]` |
+| Paperless docs by filter **plus** a natural-language query | `paperless_*` filters + `/search` or `/hybrid-search` | `"Kosten"` + `paperless_tags: ["etron"]` |
 
 ### When to Use Paperless Filters
 
 ⚠️ **Important: Setting any `paperless_*` filter excludes ALL Obsidian notes from results.** Only use these filters when the user explicitly asks for scanned documents, invoices, receipts, contracts, or other Paperless-specific content.
 
 Use `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, or `paperless_document_type` **only** when the user's question clearly refers to Paperless documents with structured metadata:
+
+> ⚠️ **`paperless_tags` must always be a JSON array of strings**, even for a single tag: use `paperless_tags: ["sommer_urlaub2026"]`, never `paperless_tags: "sommer_urlaub2026"`. A bare string is coerced to a one-element list for convenience, but always send an array.
 
 | User says | Filter to set |
 |---|---|
@@ -742,4 +749,10 @@ Question: *"Summiere alle Kosten für Audi e-tron in 2025"*
 1. hybrid-search("Kosten Rechnung Audi e-tron", paperless_tags=["etron"], paperless_created_year=2025, top_k=20)
    → pre-filters Paperless docs by tag + year, then combines semantic and exact-term relevance
 2. get_note(<file_path>)   → loads full content for each result to extract amounts
+```
+
+Question: *"Suche das Ticket unter Tag sommer_urlaub2026"* (tag lookup, no search terms)
+```
+1. documents(paperless_tags=["sommer_urlaub2026"])
+   → filter-only listing; do NOT use /search or /hybrid-search here (they require a `query`)
 ```

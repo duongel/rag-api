@@ -96,7 +96,6 @@ class TestDocumentsEndpoint:
 
         assert resp.status_code == 200
         _patch_searcher.list_documents.assert_called_once_with(
-            10,
             paperless_tags=["nick"],
             paperless_correspondent="Kreisverwaltung Westerwaldkreis",
             paperless_created_year=None,
@@ -140,13 +139,59 @@ class TestDocumentsEndpoint:
 
         assert resp.status_code == 200
         _patch_searcher.list_documents.assert_called_once_with(
-            10,
             paperless_tags=["nick"],
             paperless_correspondent=None,
             paperless_created_year=None,
             paperless_document_type="Bescheid",
             sort_by_date=True,
         )
+
+    def test_documents_returns_full_match_set_with_total(self, client, _patch_searcher):
+        _patch_searcher.list_documents.return_value = [
+            {
+                "file_path": f"paperless/{i}.pdf",
+                "section": "",
+                "content": "",
+                "score": 1.0,
+                "match_type": "content",
+                "source": "paperless",
+                "created": "2026-04-10",
+            }
+            for i in range(17)
+        ]
+
+        resp = client.post("/documents", json={"paperless_tags": ["sommer_urlaub2026"]})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 17
+        assert body["total"] == 17
+        assert len(body["results"]) == 17
+
+    def test_documents_reports_total_when_truncated(self, client, _patch_searcher):
+        _patch_searcher.list_documents.return_value = [
+            {
+                "file_path": f"paperless/{i}.pdf",
+                "section": "",
+                "content": "",
+                "score": 1.0,
+                "match_type": "content",
+                "source": "paperless",
+                "created": "2026-04-10",
+            }
+            for i in range(17)
+        ]
+
+        resp = client.post(
+            "/documents",
+            json={"paperless_tags": ["sommer_urlaub2026"], "top_k": 5},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 5
+        assert body["total"] == 17
+        assert len(body["results"]) == 5
 
     def test_documents_rejects_non_positive_top_k(self, client, _patch_searcher):
         resp = client.post(
@@ -173,3 +218,13 @@ class TestRequestModels:
 
         assert req.paperless_tags == ["nick"]
         assert req.sort_by_date is True
+
+    def test_documents_request_coerces_string_tag_to_list(self):
+        req = DocumentsRequest(paperless_tags="sommer_urlaub2026")
+
+        assert req.paperless_tags == ["sommer_urlaub2026"]
+
+    def test_search_request_coerces_string_tag_to_list(self):
+        req = SearchRequest(query="Urlaub", paperless_tags="sommer_urlaub2026")
+
+        assert req.paperless_tags == ["sommer_urlaub2026"]

@@ -698,7 +698,7 @@ class Searcher:
         return results[:top_k]
 
     def list_documents(
-        self, top_k: int = 10,
+        self,
         paperless_tags: Optional[list[str]] = None,
         paperless_correspondent: Optional[str] = None,
         paperless_created_year: Optional[int] = None,
@@ -709,7 +709,9 @@ class Searcher:
 
         This is a filter-only retrieval path for callers that want
         documents by structured metadata without supplying a search query.
-        Results are deduplicated on document level.
+        Results are deduplicated on document level and the FULL match set is
+        returned; the API layer applies any ``top_k`` truncation so it can
+        report the true total number of matches.
         """
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
@@ -739,7 +741,7 @@ class Searcher:
             output.sort(key=lambda r: (r.get("created", ""), r["file_path"]), reverse=True)
         else:
             output.sort(key=lambda r: r["file_path"])
-        return output[:top_k]
+        return output
 
     @staticmethod
     def _keyword_score(
