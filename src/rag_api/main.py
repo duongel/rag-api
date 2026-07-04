@@ -147,7 +147,9 @@ def _register_paperless_webhook():
                 if not wf.get("enabled", True):
                     continue
                 for action in wf.get("actions", []):
-                    if action.get("type") == "webhook" and action.get("webhook", {}).get("url") == webhook_url:
+                    # Paperless represents the webhook action type as the
+                    # integer 4 (older versions used the string "webhook").
+                    if action.get("type") in (4, "webhook") and action.get("webhook", {}).get("url") == webhook_url:
                         # Ensure headers (e.g. auth token) are up to date
                         existing_headers = action.get("webhook", {}).get("headers", {})
                         if existing_headers != webhook_headers:
@@ -172,27 +174,36 @@ def _register_paperless_webhook():
         if found_existing:
             return
 
-        # Create workflow for consumption events (add/update).
-        # Paperless-NGX does not support deletion triggers, so deleted
-        # documents are cleaned up during the next full reindex.
+        # Create workflow that fires on document add/update.
+        # Paperless-NGX uses integer enums for trigger/action types:
+        #   trigger type 2 = Document Added, 3 = Document Updated
+        #   action  type 4 = Webhook
+        # The only document identifier available to the webhook template is
+        # ``doc_url`` (there is no ``document_id`` placeholder), so we send it
+        # via params as a proper JSON object (as_json=True) and let rag-api
+        # derive the id from the URL.
+        # Deletions are not supported as a trigger, so deleted documents are
+        # cleaned up during the next full reindex.
         workflow_data = {
             "name": "rag-api reindex",
             "enabled": True,
+            "order": 1,
             "triggers": [
-                {
-                    "type": "consumption",
-                    "sources": ["consume_folder", "api_upload", "mail_fetch"],
-                    "filter_filename": "*",
-                }
+                {"type": 2},
+                {"type": 3},
             ],
             "actions": [
                 {
-                    "type": "webhook",
+                    "type": 4,
                     "webhook": {
                         "url": webhook_url,
-                        "use_params": False,
-                        "params": {},
-                        "body": '{"document_id": {document_id}, "action": "updated"}',
+                        "use_params": True,
+                        "as_json": True,
+                        "params": {
+                            "doc_url": "{{ doc_url }}",
+                            "action": "updated",
+                        },
+                        "body": "",
                         "headers": webhook_headers,
                     },
                 }

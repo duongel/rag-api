@@ -269,6 +269,35 @@ class TestPaperlessWebhook:
         assert resp.status_code == 200
         assert resp.json()["status"] == "unchanged"
 
+    def test_webhook_derives_id_from_doc_url(self):
+        """Paperless workflow webhooks send doc_url, not document_id."""
+        self.indexer.reindex_paperless_doc = MagicMock(return_value=True)
+        resp = self.client.post(
+            "/webhook/paperless",
+            json={"doc_url": "https://paperless.example.com/documents/456/", "action": "updated"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "indexed"
+        assert resp.json()["document_id"] == 456
+        self.indexer.reindex_paperless_doc.assert_called_once_with(456)
+
+    def test_webhook_deleted_from_doc_url(self):
+        self.indexer.remove_paperless_doc = MagicMock()
+        resp = self.client.post(
+            "/webhook/paperless",
+            json={"doc_url": "https://paperless.example.com/documents/789/", "action": "deleted"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "removed"
+        self.indexer.remove_paperless_doc.assert_called_once_with(789)
+
+    def test_webhook_missing_identifier_returns_422(self):
+        resp = self.client.post(
+            "/webhook/paperless",
+            json={"action": "updated"},
+        )
+        assert resp.status_code == 422
+
 
 # ===========================================================================
 # get_note for Paperless documents (retrieved from ChromaDB)
