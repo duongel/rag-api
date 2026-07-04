@@ -1,3 +1,11 @@
+## [1.12.3](https://github.com/duongel/rag-api/compare/v1.12.2...v1.12.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **api:** accept single-string paperless_tags ([bef91b7](https://github.com/duongel/rag-api/commit/bef91b7e7d60545929e08031ca25712f72608231))
+* **documents:** return full match set and report total ([2e74a94](https://github.com/duongel/rag-api/commit/2e74a94babc123129c4acb5f0f9aebe5ca053168))
+
 ## [1.12.2](https://github.com/duongel/rag-api/compare/v1.12.1...v1.12.2) (2026-07-04)
 
 
