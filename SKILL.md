@@ -696,6 +696,8 @@ Use `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, or `p
 
 **How it works:** When Paperless credentials are configured, filters are resolved through the Paperless API first and then mapped to matching `paperless_doc_id` values. This is more accurate than relying on embedded text alone and supports document type filters cleanly. If the API is unavailable, the search falls back to ChromaDB metadata filters.
 
+> ℹ️ **Robust fallback:** If you call `/search`, `/hybrid-search`, or `/keyword-search` with only `paperless_*` filters and no `query`, the API automatically serves the request as a `/documents` metadata listing instead of returning a `422`. Prefer calling `/documents` directly for tag/metadata-only lookups, but a missing `query` will no longer break the request.
+
 **When NOT to use filters — search without any `paperless_*` parameters instead:**
 
 | User says | Why no filter? |

@@ -31,6 +31,47 @@ def client():
     return TestClient(app)
 
 
+class TestQueryEndpointRedirects:
+    """Query endpoints fall back to the /documents listing when only filters are given."""
+
+    @pytest.mark.parametrize("endpoint", ["/search", "/hybrid-search", "/keyword-search"])
+    def test_filter_only_redirects_to_documents(self, client, _patch_searcher, endpoint):
+        _patch_searcher.list_documents.return_value = [
+            {
+                "file_path": f"paperless/{i}.pdf",
+                "section": "",
+                "content": "",
+                "score": 1.0,
+                "match_type": "content",
+                "source": "paperless",
+                "created": "2026-04-10",
+            }
+            for i in range(17)
+        ]
+
+        resp = client.post(
+            endpoint,
+            json={"paperless_tags": ["sommer_urlaub2026"], "top_k": 20},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 17
+        assert body["count"] == 17
+        _patch_searcher.list_documents.assert_called_once()
+        _patch_searcher.semantic_search.assert_not_called()
+        _patch_searcher.hybrid_search.assert_not_called()
+        _patch_searcher.keyword_search.assert_not_called()
+
+    @pytest.mark.parametrize("endpoint", ["/search", "/hybrid-search", "/keyword-search"])
+    def test_no_query_no_filter_returns_422(self, client, _patch_searcher, endpoint):
+        resp = client.post(endpoint, json={})
+
+        assert resp.status_code == 422
+        assert "query" in str(resp.json()["detail"]).lower()
+        _patch_searcher.list_documents.assert_not_called()
+
+
 class TestKeywordSearchEndpoint:
     def test_query_still_works(self, client, _patch_searcher):
         resp = client.post("/keyword-search", json={"query": "NVR"})
@@ -45,7 +86,19 @@ class TestKeywordSearchEndpoint:
             paperless_document_type=None,
         )
 
-    def test_filter_only_request_returns_422(self, client, _patch_searcher):
+    def test_filter_only_request_redirects_to_documents(self, client, _patch_searcher):
+        _patch_searcher.list_documents.return_value = [
+            {
+                "file_path": "paperless/42.pdf",
+                "section": "",
+                "content": "",
+                "score": 1.0,
+                "match_type": "content",
+                "source": "paperless",
+                "created": "2026-04-10",
+            }
+        ]
+
         resp = client.post(
             "/keyword-search",
             json={
@@ -54,8 +107,18 @@ class TestKeywordSearchEndpoint:
             },
         )
 
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["total"] == 1
         _patch_searcher.keyword_search.assert_not_called()
+        _patch_searcher.list_documents.assert_called_once_with(
+            paperless_tags=["nick"],
+            paperless_correspondent="Kreisverwaltung Westerwaldkreis",
+            paperless_created_year=None,
+            paperless_document_type=None,
+            sort_by_date=False,
+        )
 
     def test_empty_request_still_returns_422(self, client, _patch_searcher):
         resp = client.post("/keyword-search", json={})
