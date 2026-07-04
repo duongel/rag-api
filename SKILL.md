@@ -669,8 +669,10 @@ curl -s http://127.0.0.1:8484/health
 | Class names, enum values | `/keyword-search` | `"SensorType"`, `"ContentType"` |
 | Broad topic with context | `/search` with `top_k: 10` | "Everything about network segmentation" |
 | Specific file known | `/note` | direct path |
-| Latest or newest Paperless docs | `paperless_*` filters first, then `/search` or `/hybrid-search` with `sort_by_date: true` | `"letzte Rechnung"` |
-| Paperless docs by tag/year/correspondent/type | `paperless_*` filters first, then `/search` or `/hybrid-search` | `paperless_tags: ["etron"]` |
+| Latest or newest Paperless docs (no search terms) | `/documents` with `sort_by_date: true` | `"letzte Rechnung"` → `paperless_document_type: "Rechnung"` |
+| Latest Paperless docs matching search terms | `paperless_*` filters + `/search` or `/hybrid-search` with `sort_by_date: true` | `"letzte Rechnung Telekom Internet"` |
+| Paperless docs by tag/year/correspondent/type (no search terms) | `/documents` — **filter-only, needs no `query`** | `paperless_tags: ["etron"]` |
+| Paperless docs by filter **plus** a natural-language query | `paperless_*` filters + `/search` or `/hybrid-search` | `"Kosten"` + `paperless_tags: ["etron"]` |
 
 ### When to Use Paperless Filters
 
@@ -744,4 +746,10 @@ Question: *"Summiere alle Kosten für Audi e-tron in 2025"*
 1. hybrid-search("Kosten Rechnung Audi e-tron", paperless_tags=["etron"], paperless_created_year=2025, top_k=20)
    → pre-filters Paperless docs by tag + year, then combines semantic and exact-term relevance
 2. get_note(<file_path>)   → loads full content for each result to extract amounts
+```
+
+Question: *"Suche das Ticket unter Tag sommer_urlaub2026"* (tag lookup, no search terms)
+```
+1. documents(paperless_tags=["sommer_urlaub2026"])
+   → filter-only listing; do NOT use /search or /hybrid-search here (they require a `query`)
 ```
