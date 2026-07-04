@@ -1,3 +1,10 @@
+## [1.12.2](https://github.com/duongel/rag-api/compare/v1.12.1...v1.12.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **paperless:** register webhook with current workflow API schema ([d5dc2ab](https://github.com/duongel/rag-api/commit/d5dc2ab432cc3f553d752c4c8b2a11c3cb5980f3))
+
 ## [1.12.1](https://github.com/duongel/rag-api/compare/v1.12.0...v1.12.1) (2026-07-04)
 
 
