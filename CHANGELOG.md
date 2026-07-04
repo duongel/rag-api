@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/duongel/rag-api/compare/v1.14.0...v1.15.0) (2026-07-04)
+
+
+### Features
+
+* **api:** add max_content_chars to cap result content size ([f7a117a](https://github.com/duongel/rag-api/commit/f7a117a3b63921c634528bf6ec9fb5758ef466a4))
+
 # [1.14.0](https://github.com/duongel/rag-api/compare/v1.13.0...v1.14.0) (2026-07-04)
 
 
