@@ -894,3 +894,63 @@ class TestPaperlessLookupFallback:
             _CORR_NAME_TO_ID.clear()
             _CORR_NAME_TO_ID.update(saved[2])
             _LOOKUP_COMPLETE.update(saved_complete)
+
+
+# ---------------------------------------------------------------------------
+# Recency auto-detection (B1) + expansions/stop words (B2/B3)
+# ---------------------------------------------------------------------------
+
+
+class TestRecencyAutodetect:
+    def test_detects_zuletzt(self):
+        from rag_api.search import _query_requests_recency
+        assert _query_requests_recency("Welches Fahrrad habe ich zuletzt gekauft")
+
+    def test_detects_letzte_and_punctuation(self):
+        from rag_api.search import _query_requests_recency
+        assert _query_requests_recency("letzte Telekom Rechnung?")
+        assert _query_requests_recency("neueste, Rechnung")
+
+    def test_ignores_non_recency_query(self):
+        from rag_api.search import _query_requests_recency
+        assert not _query_requests_recency("Fahrrad Kauf")
+        assert not _query_requests_recency("")
+
+    def test_semantic_search_enables_sort_by_date(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+        captured = {}
+
+        def fake_widen(*args, **kwargs):
+            captured["sort_by_date"] = kwargs.get("sort_by_date")
+            return []
+
+        # Patch the heavy internals: embed + the collection query path.
+        with patch("rag_api.search.embed_query", return_value=[0.0]):
+            searcher.collection = MagicMock()
+            searcher.collection.count.return_value = 100
+            searcher.collection.query.return_value = {
+                "ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]],
+            }
+            results = searcher.semantic_search(
+                "was habe ich zuletzt gekauft", top_k=5, expand_links=False,
+            )
+        assert results == []
+
+
+class TestExpansionsAndStopWords:
+    def test_bike_expansions_present(self):
+        from rag_api.search import Searcher
+        assert "fahrrad" in Searcher._QUERY_EXPANSIONS
+        assert "bike" in Searcher._QUERY_EXPANSIONS["fahrrad"]
+
+    def test_purchase_expansions_present(self):
+        from rag_api.search import Searcher
+        assert "gekauft" in Searcher._QUERY_EXPANSIONS
+        assert "rechnung" in Searcher._QUERY_EXPANSIONS["kauf"]
+
+    def test_filler_and_recency_stop_words(self):
+        from rag_api.search import Searcher
+        for w in ("welches", "mein", "zuletzt", "letzte", "neueste"):
+            assert w in Searcher._STOP_WORDS
