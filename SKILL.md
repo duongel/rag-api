@@ -678,6 +678,8 @@ curl -s http://127.0.0.1:8484/health
 
 Use `paperless_tags`, `paperless_correspondent`, `paperless_created_year`, or `paperless_document_type` **only** when the user's question clearly refers to Paperless documents with structured metadata:
 
+> ⚠️ **`paperless_tags` must always be a JSON array of strings**, even for a single tag: use `paperless_tags: ["sommer_urlaub2026"]`, never `paperless_tags: "sommer_urlaub2026"`. A bare string is coerced to a one-element list for convenience, but always send an array.
+
 | User says | Filter to set |
 |---|---|
 | "alle Rechnungen für Audi e-tron in 2025" | `paperless_tags: ["etron"]`, `paperless_created_year: 2025` |

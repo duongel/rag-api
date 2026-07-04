@@ -173,3 +173,13 @@ class TestRequestModels:
 
         assert req.paperless_tags == ["nick"]
         assert req.sort_by_date is True
+
+    def test_documents_request_coerces_string_tag_to_list(self):
+        req = DocumentsRequest(paperless_tags="sommer_urlaub2026")
+
+        assert req.paperless_tags == ["sommer_urlaub2026"]
+
+    def test_search_request_coerces_string_tag_to_list(self):
+        req = SearchRequest(query="Urlaub", paperless_tags="sommer_urlaub2026")
+
+        assert req.paperless_tags == ["sommer_urlaub2026"]

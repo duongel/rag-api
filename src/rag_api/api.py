@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Security, status as http_status
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 
 from urllib.parse import quote
@@ -71,6 +71,18 @@ def require_auth(
 # ── request / response models ────────────────────────────────────────────
 
 
+def _coerce_tags_to_list(value):
+    """Accept a single string for paperless_tags and wrap it into a list.
+
+    LLM-driven callers (e.g. n8n agents) frequently send a scalar string like
+    ``"sommer_urlaub2026"`` instead of a JSON array. Coerce such input so the
+    request no longer fails validation with a 422.
+    """
+    if isinstance(value, str):
+        return [value]
+    return value
+
+
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
@@ -81,6 +93,8 @@ class SearchRequest(BaseModel):
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
     paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+
+    _coerce_tags = field_validator("paperless_tags", mode="before")(_coerce_tags_to_list)
 
 
 class SearchResult(BaseModel):
@@ -138,6 +152,8 @@ class DocumentsRequest(BaseModel):
     paperless_correspondent: Optional[str] = None
     paperless_created_year: Optional[int] = None
     paperless_document_type: Optional[str] = None  # e.g. "Rechnung", "Vertrag"
+
+    _coerce_tags = field_validator("paperless_tags", mode="before")(_coerce_tags_to_list)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
