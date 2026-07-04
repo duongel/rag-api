@@ -950,6 +950,12 @@ class TestExpansionsAndStopWords:
         assert "gekauft" in Searcher._QUERY_EXPANSIONS
         assert "rechnung" in Searcher._QUERY_EXPANSIONS["kauf"]
 
+    def test_id_document_expansions_present(self):
+        from rag_api.search import Searcher
+        assert "reisepass" in Searcher._QUERY_EXPANSIONS
+        assert "ausweis" in Searcher._QUERY_EXPANSIONS["reisepass"]
+        assert "reisepass" in Searcher._QUERY_EXPANSIONS["ausweis"]
+
     def test_filler_and_recency_stop_words(self):
         from rag_api.search import Searcher
         for w in ("welches", "mein", "zuletzt", "letzte", "neueste"):
