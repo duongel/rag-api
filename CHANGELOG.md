@@ -1,3 +1,15 @@
+# [1.16.0](https://github.com/duongel/rag-api/compare/v1.15.1...v1.16.0) (2026-07-05)
+
+
+### Bug Fixes
+
+* preserve requested top_k when reranking ([f4e40f6](https://github.com/duongel/rag-api/commit/f4e40f6b5ddca72a11a7be252f01a60573cf0a0f))
+
+
+### Features
+
+* **index:** upgrade to bge-m3, add opt-in reranker, tune HNSW ([2dd74b4](https://github.com/duongel/rag-api/commit/2dd74b4fe38cc90b6a2a734b3e9fe860a9ec3c9e))
+
 ## [1.15.1](https://github.com/duongel/rag-api/compare/v1.15.0...v1.15.1) (2026-07-05)
 
 
