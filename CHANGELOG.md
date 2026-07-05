@@ -1,3 +1,10 @@
+## [1.17.1](https://github.com/duongel/rag-api/compare/v1.17.0...v1.17.1) (2026-07-05)
+
+
+### Performance Improvements
+
+* **reranker:** truncate candidate docs to bound rerank latency ([5f876b1](https://github.com/duongel/rag-api/commit/5f876b1f344fa461e4de6ef41a7bee89c66960cd))
+
 # [1.17.0](https://github.com/duongel/rag-api/compare/v1.16.0...v1.17.0) (2026-07-05)
 
 
