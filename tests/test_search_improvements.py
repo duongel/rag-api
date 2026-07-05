@@ -332,6 +332,7 @@ class TestHybridSearch:
             paperless_document_type=None,
             sort_by_date=True,
             min_score=0.0,
+            _rerank=False,
         )
 
     def test_hybrid_keeps_min_score_for_post_merge_filtering(self):

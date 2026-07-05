@@ -104,7 +104,8 @@ graph LR
         SEARCH["/search · /keyword-search · /hybrid-search · /documents"]
         FILTER["Paperless pre-filter<br><sub>tags / correspondent / year / document type</sub>"]
         CHROMA["ChromaDB index<br><sub>semantic + keyword retrieval</sub>"]
-        OLL["ollama<br><sub>nomic-embed-text</sub>"]
+        OLL["ollama<br><sub>bge-m3</sub>"]
+        RERANK["reranker (optional)<br><sub>bge-reranker-v2-m3</sub>"]:::ext
     end
 
     VAULT["Obsidian Vault"]:::ext
@@ -116,6 +117,7 @@ graph LR
     FILTER <-->|REST API| PAPER
     SEARCH --> CHROMA
     CHROMA -->|embeddings| OLL
+    SEARCH -.->|top candidates| RERANK
     VAULT -->|read-only mount| CHROMA
     PAPER -->|content + metadata| CHROMA
     PAPER -->|webhook| API
@@ -128,6 +130,31 @@ graph LR
 - Paperless queries can be pre-filtered by tag, correspondent, year, and document type before semantic or hybrid ranking
 - `/hybrid-search` combines semantic and keyword retrieval, while `sort_by_date` supports newest-first document queries
 - All data-bearing endpoints require a bearer token by default
+
+## Retrieval Quality
+
+The index is tuned for retrieval accuracy on modern multi-core hardware:
+
+- **Embedding model** — defaults to `bge-m3` (1024-dim, strong multilingual
+  retrieval incl. German). Override with `EMBED_MODEL`. Task prefixes are
+  auto-selected per model (`nomic-*` needs them, `bge-m3` does not).
+- **Cross-encoder reranker (optional)** — reorders the top candidates for a
+  large precision gain. Disabled by default. Enable with:
+
+  ```bash
+  docker compose --profile reranker up -d   # start the reranker service
+  # then set on rag-api:
+  RERANK_ENABLED=true
+  ```
+
+  Search stays fully functional if the reranker is off or unreachable.
+- **HNSW tuning** — `HNSW_M`, `HNSW_CONSTRUCTION_EF`, `HNSW_SEARCH_EF` trade
+  memory/build time for recall. Defaults (32 / 200 / 128) suit 16 GB+ RAM.
+
+> [!IMPORTANT]
+> Changing `EMBED_MODEL` (or `HNSW_M` / `HNSW_CONSTRUCTION_EF`) requires a full
+> re-index. The collection stores its embedding model and is rebuilt
+> automatically on the next startup when the model changes.
 
 ## Access Modes
 

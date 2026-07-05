@@ -12,7 +12,17 @@ from typing import List, Optional, Sequence, Union
 
 import chromadb
 
-from .config import VAULT_PATH, CHROMA_PATH, PAPERLESS_REINDEX_WORKERS
+from .config import (
+    VAULT_PATH,
+    CHROMA_PATH,
+    PAPERLESS_REINDEX_WORKERS,
+    PAPERLESS_PREFETCH_WORKERS,
+    EMBED_MODEL,
+    EMBED_BATCH,
+    HNSW_M,
+    HNSW_CONSTRUCTION_EF,
+    HNSW_SEARCH_EF,
+)
 from .graph import LinkGraph
 from .parser import parse_markdown, parse_pdf, parse_plaintext, extract_wikilinks, extract_tags
 
@@ -20,11 +30,27 @@ from .embeddings import embed_documents
 
 logger = logging.getLogger(__name__)
 
-_EMBED_BATCH = 64
+_EMBED_BATCH = EMBED_BATCH
+_COLLECTION_NAME = "rag_documents"
 _PAPERLESS_TAG_NAME_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_CORRESPONDENT_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_DOCTYPE_CACHE: dict[str, tuple[str, float]] = {}
 _PAPERLESS_CACHE_TTL_SECONDS = 300.0
+
+
+def _collection_metadata() -> dict:
+    """ChromaDB collection metadata: cosine space, tuned HNSW, embed model.
+
+    The embedding model name is stored so a model change (which usually
+    changes the vector dimension) can be detected and the collection rebuilt.
+    """
+    return {
+        "hnsw:space": "cosine",
+        "hnsw:M": HNSW_M,
+        "hnsw:construction_ef": HNSW_CONSTRUCTION_EF,
+        "hnsw:search_ef": HNSW_SEARCH_EF,
+        "embed_model": EMBED_MODEL,
+    }
 
 
 class Indexer:
@@ -35,10 +61,7 @@ class Indexer:
         _PAPERLESS_CORRESPONDENT_CACHE.clear()
         _PAPERLESS_DOCTYPE_CACHE.clear()
         self.client = chromadb.PersistentClient(path=CHROMA_PATH)
-        self.collection = self.client.get_or_create_collection(
-            name="rag_documents",
-            metadata={"hnsw:space": "cosine"},
-        )
+        self.collection = self._get_or_create_collection()
         self._file_hashes: dict[str, str] = {}
         # Maps file_path key → source ("obsidian" | "paperless")
         self._file_sources: dict[str, str] = {}
@@ -52,6 +75,35 @@ class Indexer:
         # Lock for serialising ChromaDB writes (PersistentClient is not thread-safe)
         self._db_lock = threading.Lock()
         self._load_file_hashes()
+
+    def _get_or_create_collection(self):
+        """Return the ChromaDB collection, rebuilding it on model change.
+
+        If an existing collection was built with a different (or unknown)
+        embedding model — its stored ``embed_model`` metadata differs from the
+        configured one, or is absent on collections created before this
+        metadata existed — its vectors are almost certainly the wrong
+        dimensionality. The collection is dropped and recreated so the
+        subsequent full re-index repopulates it with the new model's
+        embeddings.
+        """
+        collection = self.client.get_or_create_collection(
+            name=_COLLECTION_NAME,
+            metadata=_collection_metadata(),
+        )
+        stored_model = (collection.metadata or {}).get("embed_model")
+        if stored_model != EMBED_MODEL:
+            logger.warning(
+                "Embedding model changed (%s → %s) — rebuilding collection; "
+                "a full re-index will repopulate it.",
+                stored_model or "unknown", EMBED_MODEL,
+            )
+            self.client.delete_collection(_COLLECTION_NAME)
+            collection = self.client.get_or_create_collection(
+                name=_COLLECTION_NAME,
+                metadata=_collection_metadata(),
+            )
+        return collection
 
     @staticmethod
     def _doc_key(source: str, file_path: str) -> str:
@@ -482,7 +534,7 @@ class Indexer:
 
             failed_pages = 0
             has_more_pages = False
-            with ThreadPoolExecutor(max_workers=min(8, total_pages - 1)) as page_pool:
+            with ThreadPoolExecutor(max_workers=min(PAPERLESS_PREFETCH_WORKERS, total_pages - 1)) as page_pool:
                 futures = {
                     page_pool.submit(_fetch_page, p): p
                     for p in range(2, total_pages + 1)

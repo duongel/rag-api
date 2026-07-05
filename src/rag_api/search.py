@@ -5,9 +5,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .config import VAULT_PATH, DATA_SOURCES, PAPERLESS_URL, PAPERLESS_TOKEN
+from .config import VAULT_PATH, DATA_SOURCES, PAPERLESS_URL, PAPERLESS_TOKEN, RERANK_CANDIDATES
 from .embeddings import embed_query
 from .indexer import Indexer
+from .reranker import rerank_enabled, rerank_results
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class Searcher:
         paperless_document_type: Optional[str] = None,
         sort_by_date: bool = False,
         min_score: float = 0.0,
+        _rerank: bool = True,
     ) -> list[dict]:
         """Embed *query*, return the most similar chunks, and optionally
         append linked notes up to 2 degrees of separation.
@@ -113,20 +115,26 @@ class Searcher:
         sort_by_date = sort_by_date or _query_requests_recency(query)
         query_embedding = embed_query(query)
 
+        # Reranking (when active) needs a wider candidate pool to reorder.
+        # It is skipped for date-sorted queries where recency, not relevance,
+        # determines the final order.
+        rerank_active = _rerank and rerank_enabled() and not sort_by_date
+        retrieve_k = max(top_k, RERANK_CANDIDATES) if rerank_active else top_k
+
         where = _build_chromadb_filters(
             paperless_tags, paperless_correspondent, paperless_created_year,
             paperless_document_type,
         )
 
-        # Fetch more than top_k so that deduplication (which collapses
+        # Fetch more than retrieve_k so that deduplication (which collapses
         # multiple chunks from the same document/section) doesn't
         # under-fill the result set.  Both paths use the same adaptive
         # widening loop: start with a generous initial window, dedup,
         # and double the fetch size when unique results are still below
-        # top_k.  Date-sorting gets a wider initial window because we
+        # retrieve_k.  Date-sorting gets a wider initial window because we
         # need to capture truly newest documents regardless of score.
         corpus_size = self.collection.count() or 1
-        fetch_k = max(top_k * 20, 200) if sort_by_date else top_k * 3
+        fetch_k = max(retrieve_k * 20, 200) if sort_by_date else retrieve_k * 3
 
         output: list[dict] = []
         _MAX_WIDEN_ITERS = 8  # safety cap: at most 256× initial window
@@ -144,7 +152,7 @@ class Searcher:
             raw = self._parse_query_results(results)
             output = self._dedup_results(raw)
 
-            if len(output) >= top_k or actual_k >= corpus_size:
+            if len(output) >= retrieve_k or actual_k >= corpus_size:
                 break
             # When a filter is active, ChromaDB may return fewer rows
             # than requested because matching candidates are exhausted.
@@ -155,13 +163,13 @@ class Searcher:
 
         if expand_links and not where:
             # For score-ranked search, only seed graph expansion with the
-            # best top_k semantic hits so low-relevance tails do not
+            # best retrieve_k semantic hits so low-relevance tails do not
             # promote unrelated linked notes.
             #
             # For date-sorted search, keep the full widened semantic
             # candidate pool so newer documents outside the score top_k
             # are still eligible after date reordering.
-            seed_k = len(output) if sort_by_date else top_k
+            seed_k = len(output) if sort_by_date else retrieve_k
             seeds = sorted(output, key=lambda r: r["score"], reverse=True)[:seed_k]
             output = self._expand_with_links(seeds, query_embedding, seed_k)
 
@@ -174,6 +182,11 @@ class Searcher:
                 key=lambda r: r.get("created", ""),
                 reverse=True,
             )
+            return output[:top_k]
+
+        if rerank_active:
+            candidates = sorted(output, key=lambda r: r["score"], reverse=True)[:RERANK_CANDIDATES]
+            return rerank_results(query, candidates, top_k)
 
         return output[:top_k]
 
@@ -337,6 +350,9 @@ class Searcher:
             # Apply min_score after hybrid merge/rerank so documents are
             # not dropped before cross-method and keyword/synonym boosts.
             min_score=0.0,
+            # Rerank once over the merged pool below, not on the semantic
+            # candidate set in isolation.
+            _rerank=False,
         )
 
         # Build a keyword query from content words only.
@@ -439,8 +455,12 @@ class Searcher:
         if sort_by_date:
             merged = _gate_by_relevance(merged)
             merged.sort(key=lambda r: r.get("created", ""), reverse=True)
-        else:
-            merged.sort(key=lambda r: r["score"], reverse=True)
+            return merged[:top_k]
+
+        merged.sort(key=lambda r: r["score"], reverse=True)
+
+        if rerank_enabled():
+            return rerank_results(query, merged[:RERANK_CANDIDATES], top_k)
 
         return merged[:top_k]
 
