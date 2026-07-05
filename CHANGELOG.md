@@ -1,3 +1,11 @@
+# [1.17.0](https://github.com/duongel/rag-api/compare/v1.16.0...v1.17.0) (2026-07-05)
+
+
+### Features
+
+* **index:** parallelize obsidian reindex and expose indexing tuning ([4cb1d4a](https://github.com/duongel/rag-api/commit/4cb1d4a3b25ed6164c2fc8aee6dbbe7aa109d7e6))
+* **install:** auto-start optional reranker and pull configured embed model ([84ea109](https://github.com/duongel/rag-api/commit/84ea1091d53760de977daa7a656f32db288b80a0))
+
 # [1.16.0](https://github.com/duongel/rag-api/compare/v1.15.1...v1.16.0) (2026-07-05)
 
 
