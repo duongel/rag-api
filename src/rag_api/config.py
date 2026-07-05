@@ -35,6 +35,11 @@ RERANK_MODEL = os.environ.get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 # the caller's top_k. Larger pools improve recall at the cost of latency.
 RERANK_CANDIDATES = int(os.environ.get("RERANK_CANDIDATES", "30"))
 RERANK_TIMEOUT_SECONDS = int(os.environ.get("RERANK_TIMEOUT_SECONDS", "15"))
+# Each candidate document is truncated to this many characters before being
+# sent to the reranker. Cross-encoder latency scales with sequence length, so
+# capping it keeps reranking fast on CPU-only rerankers; the leading portion of
+# a chunk carries the strongest relevance signal. Set to 0 to disable trimming.
+RERANK_DOC_CHARS = int(os.environ.get("RERANK_DOC_CHARS", "512"))
 
 # ---------------------------------------------------------------------------
 # HNSW index tuning (ChromaDB)

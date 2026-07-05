@@ -21,6 +21,7 @@ from .config import (
     RERANK_URL,
     RERANK_MODEL,
     RERANK_TIMEOUT_SECONDS,
+    RERANK_DOC_CHARS,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,13 @@ logger = logging.getLogger(__name__)
 def rerank_enabled() -> bool:
     """Return True when reranking is switched on and a URL is configured."""
     return bool(RERANK_ENABLED and RERANK_URL)
+
+
+def _truncate(text: str) -> str:
+    """Trim a candidate document to ``RERANK_DOC_CHARS`` (0 = no trimming)."""
+    if RERANK_DOC_CHARS > 0:
+        return text[:RERANK_DOC_CHARS]
+    return text
 
 
 def rerank_results(
@@ -49,7 +57,7 @@ def rerank_results(
     if not rerank_enabled() or not query or len(results) <= 1:
         return results[:top_k]
 
-    documents = [str(r.get(content_key, "") or "") for r in results]
+    documents = [_truncate(str(r.get(content_key, "") or "")) for r in results]
     scores = _request_scores(query, documents)
     if scores is None:
         return results[:top_k]
