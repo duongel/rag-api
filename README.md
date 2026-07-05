@@ -139,7 +139,9 @@ The index is tuned for retrieval accuracy on modern multi-core hardware:
   retrieval incl. German). Override with `EMBED_MODEL`. Task prefixes are
   auto-selected per model (`nomic-*` needs them, `bge-m3` does not).
 - **Cross-encoder reranker (optional)** — reorders the top candidates for a
-  large precision gain. Disabled by default. Enable with:
+  large precision gain. Disabled by default. The installer (`install.sh` /
+  `start.sh`) prompts to enable it and starts the container automatically. To
+  enable it manually instead:
 
   ```bash
   docker compose --profile reranker up -d   # start the reranker service

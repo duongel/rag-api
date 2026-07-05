@@ -30,6 +30,16 @@ die() { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
 _needs_obsidian()  { [[ "${DATA_SOURCES:-all}" != "paperless" ]]; }
 _needs_paperless() { [[ "${DATA_SOURCES:-all}" != "obsidian"  ]]; }
 
+# Idempotently add a profile to the comma-separated COMPOSE_PROFILES list.
+_add_profile() {
+  local profile="$1"
+  case ",${COMPOSE_PROFILES:-}," in
+    *",${profile},"*) ;;                              # already present
+    ,,)  COMPOSE_PROFILES="$profile" ;;               # list was empty
+    *)   COMPOSE_PROFILES="${COMPOSE_PROFILES},${profile}" ;;
+  esac
+}
+
 _show_token() {
   local token=$1
   if [[ -n "$token" ]]; then
@@ -191,6 +201,23 @@ with urllib.request.urlopen(req, timeout=5) as resp:
 
 # ── Shared prompt helpers (used by both fresh setup and .env reuse) ───────
 
+_prompt_reranker() {
+  echo -e "🎯 ${BOLD}Cross-encoder reranker${NC} ${BLUE}(optional)${NC}"
+  echo -e "   ${BLUE}ℹ️  Reorders the top search candidates for a large precision gain.${NC}"
+  echo -e "      ${BLUE}Runs as an extra container (~2 GB model download, CPU).${NC}"
+  echo -e "      ${BLUE}Recommended on capable hardware; search still works if it's off.${NC}"
+  echo -n "   Enable reranker? [y/N] "
+  read -r ENABLE_RERANK
+  if [[ "$ENABLE_RERANK" =~ ^[yYjJ]$ ]]; then
+    RERANK_ENABLED="true"
+    _add_profile reranker
+    echo -e "   ${GREEN}✓${NC} Reranker enabled\n"
+  else
+    RERANK_ENABLED="false"
+    echo -e "   ${GREEN}✓${NC} Reranker disabled\n"
+  fi
+}
+
 _prompt_webhook_url() {
   echo -e "   ${BLUE}ℹ️  Paperless needs a URL to reach rag-api for webhook callbacks.${NC}"
   echo -e "      Enter the IP or hostname that Paperless can reach (e.g. http://192.168.1.50:${HOST_PORT:-$_DEFAULT_PORT})."
@@ -295,6 +322,9 @@ _run_setup() {
     echo -e "   ${GREEN}✓${NC} Local Ollama will be started\n"
   fi
 
+  # 3b. Optional cross-encoder reranker
+  _prompt_reranker
+
   # 4. Access mode
   HOST_BIND_ADDRESS="$_DEFAULT_BIND"
   HOST_PORT="$_DEFAULT_PORT"
@@ -376,6 +406,7 @@ DATA_SOURCES=$DATA_SOURCES
 VAULT_PATH=$VAULT_PATH
 OLLAMA_URL=$OLLAMA_URL
 COMPOSE_PROFILES=$COMPOSE_PROFILES
+RERANK_ENABLED=$RERANK_ENABLED
 ACCESS_MODE=$ACCESS_MODE
 HOST_BIND_ADDRESS=$HOST_BIND_ADDRESS
 HOST_PORT=$HOST_PORT
@@ -498,6 +529,16 @@ if [[ -f .env ]]; then
 
       LOCAL_OLLAMA=false
       [[ "${COMPOSE_PROFILES:-}" == *"local-ollama"* ]] && LOCAL_OLLAMA=true
+
+      # Reranker: prompt once if never configured; keep the profile in sync.
+      if [[ -z "${RERANK_ENABLED:-}" ]]; then
+        _prompt_reranker
+        _update_env RERANK_ENABLED "$RERANK_ENABLED" COMPOSE_PROFILES "$COMPOSE_PROFILES"
+      elif [[ "${RERANK_ENABLED}" == "true" ]]; then
+        _add_profile reranker
+        _update_env COMPOSE_PROFILES "$COMPOSE_PROFILES"
+      fi
+
       echo -e "${GREEN}✅ Using existing .env${NC}\n"
     fi
   else
@@ -527,9 +568,20 @@ if [[ "$LOCAL_OLLAMA" == true ]]; then
     [ "$attempts" -ge 60 ] && die "Ollama did not respond after 2 minutes. Check: docker compose logs ${_DEFAULT_OLLAMA_SERVICE}"
   done
 
-  echo "📥 Pulling nomic-embed-text (first run: ~1 min)..."
-  _compose exec -T "${_DEFAULT_OLLAMA_SERVICE}" ollama pull nomic-embed-text
+  _EMBED_MODEL="${EMBED_MODEL:-bge-m3}"
+  echo "📥 Pulling ${_EMBED_MODEL} (first run may take a few minutes)..."
+  _compose exec -T "${_DEFAULT_OLLAMA_SERVICE}" ollama pull "${_EMBED_MODEL}"
   echo -e "${GREEN}✅ Model ready${NC}\n"
+fi
+
+# ── Start reranker (optional) ─────────────────────────────────────────────
+# When enabled, the cross-encoder reranker runs as its own container behind
+# the `reranker` compose profile. It downloads its model on first start.
+if [[ "${RERANK_ENABLED:-false}" == "true" ]]; then
+  echo "🎯 Starting reranker container (first run downloads the model)..."
+  _compose --profile reranker up -d reranker \
+    || die "Failed to start reranker. Check: docker compose logs reranker"
+  echo -e "${GREEN}✅ Reranker started${NC}\n"
 fi
 
 # ── Start rag-api ─────────────────────────────────────────────────────────
