@@ -144,6 +144,47 @@ class TestReranker:
 
         assert [r["file_path"] for r in out] == ["a", "b", "c"]
 
+    def test_documents_are_truncated_before_sending(self):
+        from rag_api import reranker
+
+        long_results = [
+            {"file_path": "a", "content": "x" * 5000, "score": 0.9},
+            {"file_path": "b", "content": "y" * 5000, "score": 0.8},
+        ]
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["texts"] = json["texts"]
+            return _FakeResponse([{"index": 0, "score": 0.5}, {"index": 1, "score": 0.4}])
+
+        with patch.object(reranker, "RERANK_ENABLED", True), \
+             patch.object(reranker, "RERANK_URL", "http://reranker:80"), \
+             patch.object(reranker, "RERANK_DOC_CHARS", 512), \
+             patch.object(reranker.requests, "post", side_effect=fake_post):
+            reranker.rerank_results("q", long_results, top_k=2)
+
+        assert all(len(t) == 512 for t in captured["texts"])
+
+    def test_truncation_disabled_sends_full_text(self):
+        from rag_api import reranker
+
+        long_results = [
+            {"file_path": "a", "content": "x" * 3000, "score": 0.9},
+            {"file_path": "b", "content": "y" * 3000, "score": 0.8},
+        ]
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["texts"] = json["texts"]
+            return _FakeResponse([{"index": 0, "score": 0.5}, {"index": 1, "score": 0.4}])
+
+        with patch.object(reranker, "RERANK_ENABLED", True), \
+             patch.object(reranker, "RERANK_URL", "http://reranker:80"), \
+             patch.object(reranker, "RERANK_DOC_CHARS", 0), \
+             patch.object(reranker.requests, "post", side_effect=fake_post):
+            reranker.rerank_results("q", long_results, top_k=2)
+
+        assert all(len(t) == 3000 for t in captured["texts"])
 
 # ---------------------------------------------------------------------------
 # Search integration

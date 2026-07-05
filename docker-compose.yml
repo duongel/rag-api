@@ -39,6 +39,7 @@ services:
       RERANK_URL: "${RERANK_URL:-http://reranker:80}"
       RERANK_MODEL: "${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"
       RERANK_CANDIDATES: "${RERANK_CANDIDATES:-30}"
+      RERANK_DOC_CHARS: "${RERANK_DOC_CHARS:-512}"
       # HNSW index tuning (higher = better recall, more memory/build time)
       HNSW_M: "${HNSW_M:-32}"
       HNSW_CONSTRUCTION_EF: "${HNSW_CONSTRUCTION_EF:-200}"
