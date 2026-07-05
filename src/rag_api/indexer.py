@@ -17,6 +17,7 @@ from .config import (
     CHROMA_PATH,
     PAPERLESS_REINDEX_WORKERS,
     PAPERLESS_PREFETCH_WORKERS,
+    OBSIDIAN_REINDEX_WORKERS,
     EMBED_MODEL,
     EMBED_BATCH,
     HNSW_M,
@@ -206,15 +207,19 @@ class Indexer:
             for i, c in enumerate(chunks)
         ]
 
-        self.collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=metadatas,
-        )
+        # Serialize the DB write so parallel indexing workers don't race on the
+        # ChromaDB collection or the in-memory hash maps. Embedding above (the
+        # slow part) runs outside the lock so workers stay concurrent.
+        with self._db_lock:
+            self.collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas,
+            )
 
-        self._file_hashes[doc_key] = file_hash
-        self._file_sources[doc_key] = source
+            self._file_hashes[doc_key] = file_hash
+            self._file_sources[doc_key] = source
         logger.info("Indexed %s [%s] (%d chunks)", file_path, source, len(chunks))
         return True
 
@@ -435,16 +440,37 @@ class Indexer:
         if on_progress:
             on_progress(0, total)
 
-        for processed, file_path in enumerate(all_files, start=1):
+        # Index files concurrently: embedding (the slow, I/O-bound Ollama call)
+        # runs in parallel across workers while index_file serializes DB writes
+        # via _db_lock. Progress is reported as futures complete.
+        workers = max(1, min(OBSIDIAN_REINDEX_WORKERS, total))
+        count_lock = threading.Lock()
+        progress_lock = threading.Lock()
+        processed = 0
+
+        def _index_one(file_path: Path) -> None:
+            nonlocal count, processed
             rel_path = str(file_path.relative_to(root))
             try:
                 if self.index_file(rel_path, base_path=str(root), source=source):
-                    count += 1
+                    with count_lock:
+                        count += 1
             except Exception as e:
                 logger.error("Error indexing %s: %s", rel_path, e)
-
             if on_progress:
-                on_progress(processed, total)
+                with progress_lock:
+                    processed += 1
+                    on_progress(processed, total)
+
+        if workers == 1:
+            for file_path in all_files:
+                _index_one(file_path)
+        else:
+            logger.info("Reindexing [%s] with %d worker(s)", source, workers)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(_index_one, f) for f in all_files]
+                for future in as_completed(futures):
+                    future.result()
 
         self._cleanup_deleted(source=source, base_path=str(root))
         logger.info("Full reindex [%s] complete – %d files updated.", source, count)

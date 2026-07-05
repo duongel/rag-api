@@ -3,6 +3,12 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      # Serve multiple embedding requests concurrently so parallel indexing
+      # workers actually run in parallel instead of queueing. Tune to your CPU.
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-4}"
+      # Keep the embedding model resident to avoid reload stalls during indexing.
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-30m}"
     networks:
       - rag-network
     profiles:
@@ -21,6 +27,12 @@ services:
       CHROMA_PATH: "/app/data/chroma"
       EMBED_MODEL: "${EMBED_MODEL:-bge-m3}"
       EMBED_BATCH: "${EMBED_BATCH:-64}"
+      OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-180}"
+      # Indexing concurrency (higher = faster on multi-core hardware, more
+      # Ollama load). Obsidian/PDF and Paperless reindex worker counts.
+      OBSIDIAN_REINDEX_WORKERS: "${OBSIDIAN_REINDEX_WORKERS:-8}"
+      PAPERLESS_REINDEX_WORKERS: "${PAPERLESS_REINDEX_WORKERS:-8}"
+      PAPERLESS_PREFETCH_WORKERS: "${PAPERLESS_PREFETCH_WORKERS:-8}"
       # Optional cross-encoder reranking (disabled by default). Enable it and
       # start the `reranker` service with: docker compose --profile reranker up
       RERANK_ENABLED: "${RERANK_ENABLED:-false}"
