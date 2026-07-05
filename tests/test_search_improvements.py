@@ -640,6 +640,63 @@ class TestHybridSearch:
         assert filename_results[0].get("created") == "2025-06-15"
 
 
+class TestRerankCandidateLimit:
+    def test_semantic_rerank_can_return_more_than_candidate_default(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = None
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 5
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2", "id3", "id4", "id5"]],
+            "documents": [["doc1", "doc2", "doc3", "doc4", "doc5"]],
+            "metadatas": [[
+                {"file_path": f"doc{i}.pdf", "section": "", "source": "paperless"}
+                for i in range(1, 6)
+            ]],
+            "distances": [[0.1, 0.2, 0.3, 0.4, 0.5]],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.RERANK_CANDIDATES", 2), \
+             patch("rag_api.search.embed_query", return_value=[0.1] * 8), \
+             patch("rag_api.search.rerank_enabled", return_value=True), \
+             patch("rag_api.search.rerank_results", side_effect=lambda _, results, top_k: results[:top_k]):
+            results = searcher.semantic_search("test", top_k=4, expand_links=False)
+
+        assert len(results) == 4
+
+    def test_hybrid_rerank_can_return_more_than_candidate_default(self):
+        from rag_api.search import Searcher
+
+        searcher = Searcher.__new__(Searcher)
+        sem_results = [
+            {
+                "file_path": f"doc{i}.pdf",
+                "section": "",
+                "score": 1.0 - (i * 0.01),
+                "source": "paperless",
+                "match_type": "semantic",
+                "content": "test content",
+            }
+            for i in range(1, 6)
+        ]
+
+        with patch("rag_api.search.RERANK_CANDIDATES", 2), \
+             patch("rag_api.search.rerank_enabled", return_value=True), \
+             patch("rag_api.search.rerank_results", side_effect=lambda _, results, top_k: results[:top_k]), \
+             patch.object(searcher, "semantic_search", return_value=sem_results), \
+             patch.object(searcher, "keyword_search", return_value=[]):
+            results = searcher.hybrid_search("test", top_k=4)
+
+        assert len(results) == 4
+
+
 class TestSpecificTermPenalty:
     """Specific terms (no synonym expansions) should penalize non-matching docs."""
 

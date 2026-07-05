@@ -188,7 +188,8 @@ class Searcher:
             return output[:top_k]
 
         if rerank_active:
-            candidates = sorted(output, key=lambda r: r["score"], reverse=True)[:RERANK_CANDIDATES]
+            candidate_limit = max(top_k, RERANK_CANDIDATES)
+            candidates = sorted(output, key=lambda r: r["score"], reverse=True)[:candidate_limit]
             return rerank_results(query, candidates, top_k)
 
         return output[:top_k]
@@ -418,7 +419,8 @@ class Searcher:
         merged.sort(key=lambda r: r["score"], reverse=True)
 
         if rerank_enabled():
-            return rerank_results(query, merged[:RERANK_CANDIDATES], top_k)
+            candidate_limit = max(top_k, RERANK_CANDIDATES)
+            return rerank_results(query, merged[:candidate_limit], top_k)
 
         return merged[:top_k]
 
