@@ -19,7 +19,18 @@ services:
     environment:
       OLLAMA_URL: "${OLLAMA_URL:-http://ollama:11434}"
       CHROMA_PATH: "/app/data/chroma"
-      EMBED_MODEL: "nomic-embed-text"
+      EMBED_MODEL: "${EMBED_MODEL:-bge-m3}"
+      EMBED_BATCH: "${EMBED_BATCH:-64}"
+      # Optional cross-encoder reranking (disabled by default). Enable it and
+      # start the `reranker` service with: docker compose --profile reranker up
+      RERANK_ENABLED: "${RERANK_ENABLED:-false}"
+      RERANK_URL: "${RERANK_URL:-http://reranker:80}"
+      RERANK_MODEL: "${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"
+      RERANK_CANDIDATES: "${RERANK_CANDIDATES:-30}"
+      # HNSW index tuning (higher = better recall, more memory/build time)
+      HNSW_M: "${HNSW_M:-32}"
+      HNSW_CONSTRUCTION_EF: "${HNSW_CONSTRUCTION_EF:-200}"
+      HNSW_SEARCH_EF: "${HNSW_SEARCH_EF:-128}"
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8484}"
       AUTH_REQUIRED: "${AUTH_REQUIRED:-true}"
       API_BEARER_TOKEN: "${API_BEARER_TOKEN}"
@@ -33,9 +44,26 @@ services:
     networks:
       - rag-network
 
+  # Optional cross-encoder reranker (Hugging Face text-embeddings-inference).
+  # Only started when the `reranker` profile is active. Set RERANK_ENABLED=true
+  # on rag-api to route candidate results through it.
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    command: ["--model-id", "${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"]
+    volumes:
+      - reranker_data:/data
+    expose:
+      - "80"
+    networks:
+      - rag-network
+    profiles:
+      - reranker
+    restart: unless-stopped
+
 volumes:
   chroma_data:
   ollama_data:
+  reranker_data:
 
 networks:
   rag-network:

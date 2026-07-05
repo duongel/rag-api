@@ -1,29 +1,52 @@
 """Thin wrapper around the Ollama /api/embed endpoint.
 
-nomic-embed-text requires task-specific prefixes for good retrieval:
-  - ``search_document: <text>`` when indexing documents
-  - ``search_query: <text>``    when embedding a user query
+Some embedding models require task-specific prefixes for good retrieval:
+  - nomic-embed-text: ``search_document: <text>`` / ``search_query: <text>``
+Most modern models (bge-m3, mxbai-embed-large) work best with no prefix.
+The prefixes are selected automatically from the model name and can be
+overridden via ``EMBED_DOC_PREFIX`` / ``EMBED_QUERY_PREFIX``.
 """
 
 import logging
 
 import requests
 
-from .config import OLLAMA_URL, EMBED_MODEL
+from .config import (
+    OLLAMA_URL,
+    EMBED_MODEL,
+    EMBED_DOC_PREFIX,
+    EMBED_QUERY_PREFIX,
+)
 
 logger = logging.getLogger(__name__)
 
-_PREFIX_DOC = "search_document: "
-_PREFIX_QUERY = "search_query: "
+# Models that need nomic-style task prefixes to retrieve well.
+_NOMIC_DOC_PREFIX = "search_document: "
+_NOMIC_QUERY_PREFIX = "search_query: "
+
+
+def _resolve_prefix(configured: str, nomic_default: str) -> str:
+    """Resolve an embedding prefix from config.
+
+    ``auto`` applies the nomic prefix only for nomic-family models and no
+    prefix otherwise. Any other value is used verbatim (empty string = none).
+    """
+    if configured != "auto":
+        return configured
+    return nomic_default if "nomic" in EMBED_MODEL.lower() else ""
+
+
+_PREFIX_DOC = _resolve_prefix(EMBED_DOC_PREFIX, _NOMIC_DOC_PREFIX)
+_PREFIX_QUERY = _resolve_prefix(EMBED_QUERY_PREFIX, _NOMIC_QUERY_PREFIX)
 
 
 def embed_documents(texts: list[str]) -> list[list[float]]:
-    """Embed document chunks (uses ``search_document:`` prefix)."""
+    """Embed document chunks (applies the document prefix if configured)."""
     return _embed([_PREFIX_DOC + t for t in texts])
 
 
 def embed_query(text: str) -> list[float]:
-    """Embed a search query (uses ``search_query:`` prefix)."""
+    """Embed a search query (applies the query prefix if configured)."""
     return _embed([_PREFIX_QUERY + text])[0]
 
 
