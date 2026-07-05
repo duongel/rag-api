@@ -106,4 +106,10 @@ PAPERLESS_REINDEX_WORKERS = int(os.environ.get("PAPERLESS_REINDEX_WORKERS", "8")
 # Raised default suits multi-core hardware.
 PAPERLESS_PREFETCH_WORKERS = int(os.environ.get("PAPERLESS_PREFETCH_WORKERS", "8"))
 
+# Number of worker threads for concurrent Obsidian/PDF embedding during a full
+# vault reindex. Each worker embeds a file in parallel; DB writes are still
+# serialized. Effective throughput also depends on how many parallel requests
+# Ollama serves (see OLLAMA_NUM_PARALLEL). Set to 1 to disable concurrency.
+OBSIDIAN_REINDEX_WORKERS = int(os.environ.get("OBSIDIAN_REINDEX_WORKERS", "8"))
+
 API_PORT = 8080

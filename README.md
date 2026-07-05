@@ -158,6 +158,27 @@ The index is tuned for retrieval accuracy on modern multi-core hardware:
 > re-index. The collection stores its embedding model and is rebuilt
 > automatically on the next startup when the model changes.
 
+## Indexing Performance
+
+Full reindexing is parallelized to make use of multi-core hardware. Both the
+Obsidian/PDF and Paperless reindex paths embed files concurrently while
+database writes stay serialized:
+
+- **Worker counts** — `OBSIDIAN_REINDEX_WORKERS`, `PAPERLESS_REINDEX_WORKERS`,
+  `PAPERLESS_PREFETCH_WORKERS` (default `8` each). Raise them on strong CPUs;
+  set to `1` to disable concurrency.
+- **Embedding batch** — `EMBED_BATCH` (default `64`) chunks per Ollama request.
+- **Ollama concurrency** — worker threads only help if Ollama serves requests
+  in parallel. For the bundled local Ollama container set
+  `OLLAMA_NUM_PARALLEL` (default `4`) to roughly match the worker count, and
+  `OLLAMA_KEEP_ALIVE` (default `30m`) to keep the model resident.
+
+> [!TIP]
+> On a machine like a Ryzen AI 9 HX 370 (12c/24t, 64 GB) try
+> `OBSIDIAN_REINDEX_WORKERS=12`, `PAPERLESS_REINDEX_WORKERS=12` and
+> `OLLAMA_NUM_PARALLEL=8`. The sweet spot is CPU- and model-dependent —
+> increase gradually and watch Ollama load.
+
 ## Access Modes
 
 | Mode | Use case | Reachable at | Bind | Auth |
