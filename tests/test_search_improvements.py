@@ -960,3 +960,74 @@ class TestExpansionsAndStopWords:
         from rag_api.search import Searcher
         for w in ("welches", "mein", "zuletzt", "letzte", "neueste"):
             assert w in Searcher._STOP_WORDS
+
+
+class TestRecencyRelevanceGate:
+    """Date-sorting must not let weakly-matching but recent documents
+    outrank the genuinely relevant newest match."""
+
+    def test_gate_drops_low_relevance_before_date_sort(self):
+        from rag_api.search import _gate_by_relevance
+
+        results = [
+            {"file_path": "bike.pdf", "score": 0.91, "created": "2026-05-06"},
+            {"file_path": "old_bike.pdf", "score": 1.07, "created": "2022-11-30"},
+            {"file_path": "parking_ticket.pdf", "score": 0.60, "created": "2026-06-02"},
+        ]
+        gated = _gate_by_relevance(results)
+        paths = {r["file_path"] for r in gated}
+        assert "bike.pdf" in paths
+        assert "old_bike.pdf" in paths
+        assert "parking_ticket.pdf" not in paths  # recent but irrelevant
+
+    def test_gate_never_returns_empty(self):
+        from rag_api.search import _gate_by_relevance
+
+        assert _gate_by_relevance([]) == []
+        zero = [{"file_path": "a.pdf", "score": 0.0, "created": "2025-01-01"}]
+        assert _gate_by_relevance(zero) == zero
+
+    def test_gate_keeps_all_when_scores_close(self):
+        from rag_api.search import _gate_by_relevance
+
+        results = [
+            {"file_path": "a.pdf", "score": 1.0, "created": "2025-01-01"},
+            {"file_path": "b.pdf", "score": 0.95, "created": "2026-01-01"},
+            {"file_path": "c.pdf", "score": 0.90, "created": "2024-01-01"},
+        ]
+        assert len(_gate_by_relevance(results)) == 3
+
+    def test_semantic_date_sort_excludes_recent_irrelevant_doc(self):
+        from rag_api.search import Searcher
+
+        mock_indexer = MagicMock()
+        mock_indexer.link_graph = None
+
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 3
+
+        # relevant bike (recent) vs irrelevant parking ticket (most recent)
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2", "id3"]],
+            "documents": [["Cube bike", "old bike", "parking ticket"]],
+            "metadatas": [[
+                {"file_path": "cube.pdf", "source": "paperless", "created": "2026-05-06"},
+                {"file_path": "old.pdf", "source": "paperless", "created": "2022-11-30"},
+                {"file_path": "ticket.pdf", "source": "paperless", "created": "2026-06-02"},
+            ]],
+            # distances → scores: cube 0.91, old 0.93, ticket 0.40 (irrelevant)
+            "distances": [[0.09, 0.07, 0.60]],
+        }
+
+        searcher = Searcher.__new__(Searcher)
+        searcher.indexer = mock_indexer
+        searcher.collection = mock_collection
+
+        with patch("rag_api.search.embed_query", return_value=[0.1] * 768):
+            results = searcher.semantic_search(
+                "Fahrrad", top_k=5, sort_by_date=True, expand_links=False
+            )
+
+        paths = [r["file_path"] for r in results]
+        assert "ticket.pdf" not in paths  # recent but low relevance → gated out
+        assert paths[0] == "cube.pdf"  # newest among relevant
