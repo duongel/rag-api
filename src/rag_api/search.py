@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,8 @@ _RECENCY_TRIGGERS: set = {
 # Strip only leading/trailing punctuation so recency words are matched
 # regardless of surrounding commas or question marks.
 _RECENCY_PUNCT = "?!.,;:\"'()[]{}«»"
+_QUERY_WORD_PUNCT = _RECENCY_PUNCT
+_CROSS_METHOD_BONUS = 0.05
 
 
 def _query_requests_recency(query: str) -> bool:
@@ -196,19 +199,14 @@ class Searcher:
         output: list[dict] = []
         for i in range(len(results["ids"][0])):
             meta = results["metadatas"][0][i]
-            entry: dict = {
-                "file_path": meta["file_path"],
-                "section": meta.get("section", ""),
-                "content": results["documents"][0][i],
-                "score": round(1 - results["distances"][0][i], 4),
-                "match_type": "semantic",
-                "source": meta.get("source", "obsidian"),
-            }
-            if meta.get("paperless_doc_id"):
-                entry["paperless_doc_id"] = meta["paperless_doc_id"]
-            if meta.get("created"):
-                entry["created"] = meta["created"]
-            output.append(entry)
+            output.append(
+                Searcher._make_result_entry(
+                    meta,
+                    results["documents"][0][i],
+                    round(1 - results["distances"][0][i], 4),
+                    "semantic",
+                )
+            )
         return output
 
     @staticmethod
@@ -239,12 +237,27 @@ class Searcher:
     @staticmethod
     def _make_keyword_entry(meta: dict, doc: str, score: float) -> dict:
         """Build a keyword-search result dict from chunk metadata."""
+        return Searcher._make_result_entry(
+            meta, doc, score, "content", content_limit=1000,
+        )
+
+    @staticmethod
+    def _make_result_entry(
+        meta: dict,
+        content: str,
+        score: float,
+        match_type: str,
+        content_limit: Optional[int] = None,
+    ) -> dict:
+        """Build a normalized search-result dict from chunk metadata."""
+        if content_limit is not None:
+            content = content[:content_limit]
         entry: dict = {
             "file_path": meta["file_path"],
             "section": meta.get("section", ""),
-            "content": doc[:1000],
+            "content": content,
             "score": score,
-            "match_type": "content",
+            "match_type": match_type,
             "source": meta.get("source", "obsidian"),
         }
         if meta.get("paperless_doc_id"):
@@ -355,17 +368,7 @@ class Searcher:
             _rerank=False,
         )
 
-        # Build a keyword query from content words only.
-        # Strip leading/trailing punctuation but keep internal delimiters
-        # (hyphens, underscores, slashes, dots) so IDs like AB-1234 or
-        # INV/2025-03 stay intact.
-        _PUNCT = "?!.,;:\"'()[]{}«»"
-        raw_words = [w.strip(_PUNCT) for w in query.lower().split()]
-        raw_words = [w for w in raw_words if w]
-        content_words = [
-            w for w in raw_words
-            if w not in self._STOP_WORDS and len(w) > 1
-        ]
+        content_words = self._content_words_from_query(query)
         kw_query = " ".join(content_words) if content_words else query
 
         kw_results = self.keyword_search(
@@ -396,56 +399,11 @@ class Searcher:
                 seen[key] = r
 
         # Cross-method bonus: docs found by BOTH methods are more relevant
-        _CROSS_BONUS = 0.05
         for key in sem_keys & kw_keys:
             seen[key] = dict(seen[key])
-            seen[key]["score"] = round(seen[key]["score"] + _CROSS_BONUS, 4)
+            seen[key]["score"] = round(seen[key]["score"] + _CROSS_METHOD_BONUS, 4)
 
-        # ── Keyword/synonym re-rank ──
-        # Separate terms into "specific" (no synonym expansions — proper
-        # nouns, IDs, years) and "generic" (have expansions like "kosten").
-        # Documents missing specific terms are penalized so that e.g. a
-        # query "VW Golf Kosten 2025" demotes bank statements that match
-        # "Kosten 2025" but not "VW Golf".
-        exact_terms = set(content_words)
-        expansion_seed_words = {
-            w for w in content_words if w in self._QUERY_EXPANSIONS
-        }
-        synonym_terms: set[str] = set()
-        for w in expansion_seed_words:
-            synonym_terms.update(self._QUERY_EXPANSIONS.get(w, []))
-        synonym_terms -= exact_terms
-        specific_terms = exact_terms - expansion_seed_words
-
-        if exact_terms or synonym_terms:
-            for key, r in seen.items():
-                doc_lower = r.get("content", "").lower()
-                # Include file_path in coverage so filename matches
-                # (e.g. "VW-Golf-Rechnung.pdf") count towards term coverage
-                # even when the content snippet lacks those terms.
-                fp_lower = r.get("file_path", "").lower()
-                searchable = f"{fp_lower} {doc_lower}"
-                r = dict(r)
-
-                # Penalty for missing specific terms (proper nouns, IDs …)
-                # Skip penalty for results with no content and no useful
-                # file path (pure empty hits).
-                if specific_terms and searchable.strip():
-                    specific_cov = sum(1 for t in specific_terms if t in searchable) / len(specific_terms)
-                    if specific_cov < 1.0:
-                        r["score"] = round(r["score"] - (1 - specific_cov) * 0.20, 4)
-
-                exact_cov = 0.0
-                if exact_terms:
-                    exact_cov = sum(1 for t in exact_terms if t in doc_lower) / len(exact_terms)
-
-                synonym_cov = 0.0
-                if synonym_terms:
-                    synonym_cov = sum(1 for t in synonym_terms if t in doc_lower) / len(synonym_terms)
-
-                bonus = (0.05 * exact_cov) + (0.10 * synonym_cov)
-                r["score"] = round(r["score"] + bonus, 4)
-                seen[key] = r
+        self._apply_keyword_rerank(seen, content_words)
 
         merged = list(seen.values())
 
@@ -463,6 +421,65 @@ class Searcher:
             return rerank_results(query, merged[:RERANK_CANDIDATES], top_k)
 
         return merged[:top_k]
+
+    @classmethod
+    def _content_words_from_query(cls, query: str) -> list[str]:
+        """Return non-stopword query terms while preserving internal delimiters."""
+        raw_words = [
+            word.strip(_QUERY_WORD_PUNCT)
+            for word in query.lower().split()
+        ]
+        return [
+            word for word in raw_words
+            if word and word not in cls._STOP_WORDS and len(word) > 1
+        ]
+
+    def _expanded_query_terms(
+        self, content_words: list[str]
+    ) -> tuple[set[str], set[str], set[str]]:
+        exact_terms = set(content_words)
+        expansion_seed_words = {
+            word for word in content_words if word in self._QUERY_EXPANSIONS
+        }
+        synonym_terms: set[str] = set()
+        for word in expansion_seed_words:
+            synonym_terms.update(self._QUERY_EXPANSIONS.get(word, []))
+        return exact_terms, synonym_terms - exact_terms, exact_terms - expansion_seed_words
+
+    @staticmethod
+    def _term_coverage(terms: set[str], text: str) -> float:
+        if not terms:
+            return 0.0
+        return sum(1 for term in terms if term in text) / len(terms)
+
+    def _apply_keyword_rerank(
+        self, results_by_key: dict[str, dict], content_words: list[str]
+    ) -> None:
+        """Apply the existing keyword/synonym boosts to merged hybrid results."""
+        exact_terms, synonym_terms, specific_terms = self._expanded_query_terms(
+            content_words
+        )
+        if not exact_terms and not synonym_terms:
+            return
+
+        for key, result in results_by_key.items():
+            doc_lower = result.get("content", "").lower()
+            searchable = f"{result.get('file_path', '').lower()} {doc_lower}"
+            reranked = dict(result)
+
+            if specific_terms and searchable.strip():
+                specific_cov = self._term_coverage(specific_terms, searchable)
+                if specific_cov < 1.0:
+                    reranked["score"] = round(
+                        reranked["score"] - (1 - specific_cov) * 0.20,
+                        4,
+                    )
+
+            exact_cov = self._term_coverage(exact_terms, doc_lower)
+            synonym_cov = self._term_coverage(synonym_terms, doc_lower)
+            bonus = (0.05 * exact_cov) + (0.10 * synonym_cov)
+            reranked["score"] = round(reranked["score"] + bonus, 4)
+            results_by_key[key] = reranked
 
     # ------------------------------------------------------------------
     # Link-graph expansion
@@ -582,18 +599,12 @@ class Searcher:
             )
             if res["ids"][0]:
                 meta = res["metadatas"][0][0]
-                entry: dict = {
-                    "file_path": meta["file_path"],
-                    "section": meta.get("section", ""),
-                    "content": res["documents"][0][0],
-                    "score": round(1 - res["distances"][0][0], 4),
-                    "source": meta.get("source", "obsidian"),
-                }
-                if meta.get("paperless_doc_id"):
-                    entry["paperless_doc_id"] = meta["paperless_doc_id"]
-                if meta.get("created"):
-                    entry["created"] = meta["created"]
-                return entry
+                return self._make_result_entry(
+                    meta,
+                    res["documents"][0][0],
+                    round(1 - res["distances"][0][0], 4),
+                    "semantic",
+                )
         except Exception:
             pass
         return None
@@ -716,61 +727,13 @@ class Searcher:
             }
 
             if multi_word:
-                # Evaluate AND across all chunks of the same document so
-                # that terms split across different chunks still match.
-                from collections import defaultdict
-                file_chunks: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-                for i, doc in enumerate(all_docs["documents"] or []):
-                    meta = all_docs["metadatas"][i]
-                    file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
-                    file_chunks[file_key].append((doc, meta))
-
-                for file_key, chunks in file_chunks.items():
-                    combined_lower = " ".join(doc.lower() for doc, _ in chunks)
-                    if not all(t in combined_lower for t in terms):
-                        continue
-                    for doc, meta in chunks:
-                        doc_lower = doc.lower()
-                        if not any(t in doc_lower for t in terms):
-                            continue
-                        key = self._result_key(meta, collapse_paperless_sections=True)
-                        score = self._keyword_score_multi(doc, terms, term_patterns)
-                        if key in seen:
-                            prev_idx = key_to_idx.get(key)
-                            if prev_idx is not None:
-                                if score > results[prev_idx]["score"]:
-                                    results[prev_idx] = self._make_keyword_entry(meta, doc, score)
-                                else:
-                                    enriched = self._make_keyword_entry(meta, doc, score)
-                                    if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
-                                        results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
-                            continue
-                        entry = self._make_keyword_entry(meta, doc, score)
-                        key_to_idx[key] = len(results)
-                        results.append(entry)
-                        seen.add(key)
+                self._collect_multi_word_content_matches(
+                    all_docs, terms, term_patterns, results, key_to_idx, seen,
+                )
             else:
-                for i, doc in enumerate(all_docs["documents"] or []):
-                    doc_lower = doc.lower()
-                    if query_lower not in doc_lower:
-                        continue
-                    meta = all_docs["metadatas"][i]
-                    key = self._result_key(meta, collapse_paperless_sections=True)
-                    score = self._keyword_score(doc, query_lower, word_pattern)
-                    if key in seen:
-                        prev_idx = key_to_idx.get(key)
-                        if prev_idx is not None:
-                            if score > results[prev_idx]["score"]:
-                                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
-                            else:
-                                enriched = self._make_keyword_entry(meta, doc, score)
-                                if not results[prev_idx].get("paperless_doc_id") and enriched.get("paperless_doc_id"):
-                                    results[prev_idx]["paperless_doc_id"] = enriched["paperless_doc_id"]
-                        continue
-                    entry = self._make_keyword_entry(meta, doc, score)
-                    key_to_idx[key] = len(results)
-                    results.append(entry)
-                    seen.add(key)
+                self._collect_single_word_content_matches(
+                    all_docs, query_lower, word_pattern, results, key_to_idx, seen,
+                )
 
             # Backfill created dates for filename matches from content metadata
             created_by_key: dict[str, str] = {}
@@ -789,9 +752,79 @@ class Searcher:
         except Exception:
             pass
 
-
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:top_k]
+
+    def _collect_multi_word_content_matches(
+        self,
+        all_docs: dict,
+        terms: list[str],
+        term_patterns: list[re.Pattern[str]],
+        results: list[dict],
+        key_to_idx: dict[str, int],
+        seen: set[str],
+    ) -> None:
+        """Collect AND keyword matches, including terms split across chunks."""
+        file_chunks: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+        for i, doc in enumerate(all_docs["documents"] or []):
+            meta = all_docs["metadatas"][i]
+            file_key = f"{meta.get('source', 'obsidian')}::{meta['file_path']}"
+            file_chunks[file_key].append((doc, meta))
+
+        for chunks in file_chunks.values():
+            combined_lower = " ".join(doc.lower() for doc, _ in chunks)
+            if not all(term in combined_lower for term in terms):
+                continue
+            for doc, meta in chunks:
+                doc_lower = doc.lower()
+                if not any(term in doc_lower for term in terms):
+                    continue
+                score = self._keyword_score_multi(doc, terms, term_patterns)
+                self._upsert_keyword_result(results, key_to_idx, seen, meta, doc, score)
+
+    def _collect_single_word_content_matches(
+        self,
+        all_docs: dict,
+        query_lower: str,
+        word_pattern: re.Pattern[str],
+        results: list[dict],
+        key_to_idx: dict[str, int],
+        seen: set[str],
+    ) -> None:
+        """Collect substring keyword matches for a single query term."""
+        for i, doc in enumerate(all_docs["documents"] or []):
+            if query_lower not in doc.lower():
+                continue
+            meta = all_docs["metadatas"][i]
+            score = self._keyword_score(doc, query_lower, word_pattern)
+            self._upsert_keyword_result(results, key_to_idx, seen, meta, doc, score)
+
+    def _upsert_keyword_result(
+        self,
+        results: list[dict],
+        key_to_idx: dict[str, int],
+        seen: set[str],
+        meta: dict,
+        doc: str,
+        score: float,
+    ) -> None:
+        key = self._result_key(meta, collapse_paperless_sections=True)
+        if key in seen:
+            prev_idx = key_to_idx.get(key)
+            if prev_idx is None:
+                return
+            if score > results[prev_idx]["score"]:
+                results[prev_idx] = self._make_keyword_entry(meta, doc, score)
+            elif (
+                not results[prev_idx].get("paperless_doc_id")
+                and meta.get("paperless_doc_id")
+            ):
+                results[prev_idx]["paperless_doc_id"] = meta["paperless_doc_id"]
+            return
+
+        key_to_idx[key] = len(results)
+        results.append(self._make_keyword_entry(meta, doc, score))
+        seen.add(key)
 
     def list_documents(
         self,
@@ -1040,6 +1073,37 @@ _LOOKUP_LAST_REFRESH: dict[str, float] = {"tags": 0.0, "doctypes": 0.0, "corrs":
 _LOOKUP_TTL: float = 300.0
 
 
+def _lookup_cache_expired(cache_name: str, now: float) -> bool:
+    last_refresh = _LOOKUP_LAST_REFRESH[cache_name]
+    return last_refresh > 0 and (now - last_refresh) >= _LOOKUP_TTL
+
+
+def _refresh_paperless_lookup_cache(
+    requests_module,
+    endpoint_path: str,
+    target_cache: dict[str, int],
+    headers: dict[str, str],
+) -> bool:
+    """Populate a Paperless lookup cache from all pages of an API endpoint."""
+    try:
+        url: Optional[str] = f"{PAPERLESS_URL}{endpoint_path}"
+        params: Optional[dict] = {"page_size": 500}
+        while url:
+            resp = requests_module.get(url, params=params, headers=headers, timeout=10)
+            if not resp.ok:
+                return False
+            data = resp.json()
+            for item in data.get("results", []):
+                name = str(item.get("name", "")).strip()
+                if name:
+                    target_cache[name.lower()] = item["id"]
+            url = data.get("next")
+            params = None
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_paperless_lookups(
     force_refresh: bool = False,
     *,
@@ -1056,106 +1120,33 @@ def _ensure_paperless_lookups(
     import time
 
     headers = {"Authorization": f"Token {PAPERLESS_TOKEN}"}
+    requested_lookups = [
+        ("tags", need_tags, "/api/tags/", _TAG_NAME_TO_ID),
+        ("doctypes", need_doctypes, "/api/document_types/", _DOCTYPE_NAME_TO_ID),
+        ("corrs", need_corrs, "/api/correspondents/", _CORR_NAME_TO_ID),
+    ]
 
     # Per-type auto-refresh when cache is older than _LOOKUP_TTL so that
     # renamed tags/correspondents/document types don't stay stale.
     now = time.monotonic()
-    if need_tags and (force_refresh or (
-        _LOOKUP_LAST_REFRESH["tags"] > 0
-        and (now - _LOOKUP_LAST_REFRESH["tags"]) >= _LOOKUP_TTL
-    )):
-        _TAG_NAME_TO_ID.clear()
-        _LOOKUP_COMPLETE["tags"] = False
-    if need_doctypes and (force_refresh or (
-        _LOOKUP_LAST_REFRESH["doctypes"] > 0
-        and (now - _LOOKUP_LAST_REFRESH["doctypes"]) >= _LOOKUP_TTL
-    )):
-        _DOCTYPE_NAME_TO_ID.clear()
-        _LOOKUP_COMPLETE["doctypes"] = False
-    if need_corrs and (force_refresh or (
-        _LOOKUP_LAST_REFRESH["corrs"] > 0
-        and (now - _LOOKUP_LAST_REFRESH["corrs"]) >= _LOOKUP_TTL
-    )):
-        _CORR_NAME_TO_ID.clear()
-        _LOOKUP_COMPLETE["corrs"] = False
+    for cache_name, needed, _, cache in requested_lookups:
+        if needed and (force_refresh or _lookup_cache_expired(cache_name, now)):
+            cache.clear()
+            _LOOKUP_COMPLETE[cache_name] = False
 
-    if need_tags and not _LOOKUP_COMPLETE["tags"]:
-        _TAG_NAME_TO_ID.clear()  # discard partial data before retry
-        _LOOKUP_LAST_REFRESH["tags"] = 0.0
-        try:
-            url: Optional[str] = f"{PAPERLESS_URL}/api/tags/"
-            params: Optional[dict] = {"page_size": 500}
-            complete = True
-            while url:
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
-                if not resp.ok:
-                    complete = False
-                    break
-                data = resp.json()
-                for t in data.get("results", []):
-                    name = str(t.get("name", "")).strip()
-                    if name:
-                        _TAG_NAME_TO_ID[name.lower()] = t["id"]
-                url = data.get("next")
-                params = None
-            _LOOKUP_COMPLETE["tags"] = complete
-        except Exception:
-            _LOOKUP_COMPLETE["tags"] = False
-
-    if need_doctypes and not _LOOKUP_COMPLETE["doctypes"]:
-        _DOCTYPE_NAME_TO_ID.clear()  # discard partial data before retry
-        _LOOKUP_LAST_REFRESH["doctypes"] = 0.0
-        try:
-            url = f"{PAPERLESS_URL}/api/document_types/"
-            params = {"page_size": 500}
-            complete = True
-            while url:
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
-                if not resp.ok:
-                    complete = False
-                    break
-                data = resp.json()
-                for dt in data.get("results", []):
-                    name = str(dt.get("name", "")).strip()
-                    if name:
-                        _DOCTYPE_NAME_TO_ID[name.lower()] = dt["id"]
-                url = data.get("next")
-                params = None
-            _LOOKUP_COMPLETE["doctypes"] = complete
-        except Exception:
-            _LOOKUP_COMPLETE["doctypes"] = False
-
-    if need_corrs and not _LOOKUP_COMPLETE["corrs"]:
-        _CORR_NAME_TO_ID.clear()  # discard partial data before retry
-        _LOOKUP_LAST_REFRESH["corrs"] = 0.0
-        try:
-            url = f"{PAPERLESS_URL}/api/correspondents/"
-            params = {"page_size": 500}
-            complete = True
-            while url:
-                resp = requests.get(url, params=params, headers=headers, timeout=10)
-                if not resp.ok:
-                    complete = False
-                    break
-                data = resp.json()
-                for c in data.get("results", []):
-                    name = str(c.get("name", "")).strip()
-                    if name:
-                        _CORR_NAME_TO_ID[name.lower()] = c["id"]
-                url = data.get("next")
-                params = None
-            _LOOKUP_COMPLETE["corrs"] = complete
-        except Exception:
-            _LOOKUP_COMPLETE["corrs"] = False
+    for cache_name, needed, endpoint_path, cache in requested_lookups:
+        if needed and not _LOOKUP_COMPLETE[cache_name]:
+            cache.clear()  # discard partial data before retry
+            _LOOKUP_LAST_REFRESH[cache_name] = 0.0
+            _LOOKUP_COMPLETE[cache_name] = _refresh_paperless_lookup_cache(
+                requests, endpoint_path, cache, headers,
+            )
 
     # Record per-type refresh timestamps for completed caches
     refresh_now = time.monotonic()
-    if need_tags and _LOOKUP_COMPLETE["tags"]:
-        _LOOKUP_LAST_REFRESH["tags"] = refresh_now
-    if need_doctypes and _LOOKUP_COMPLETE["doctypes"]:
-        _LOOKUP_LAST_REFRESH["doctypes"] = refresh_now
-    if need_corrs and _LOOKUP_COMPLETE["corrs"]:
-        _LOOKUP_LAST_REFRESH["corrs"] = refresh_now
+    for cache_name, needed, _, _ in requested_lookups:
+        if needed and _LOOKUP_COMPLETE[cache_name]:
+            _LOOKUP_LAST_REFRESH[cache_name] = refresh_now
 
 
 def _query_paperless_api(
