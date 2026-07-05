@@ -54,6 +54,33 @@ def _query_requests_recency(query: str) -> bool:
     return False
 
 
+# When date-sorting, only documents whose relevance score is within this
+# fraction of the top score are kept before the date reordering.  This stops
+# weakly-matching but recent documents (e.g. an unrelated invoice) from
+# outranking the genuinely relevant newest match.
+_RECENCY_RELEVANCE_RATIO = 0.7
+
+
+def _gate_by_relevance(
+    results: list[dict], ratio: float = _RECENCY_RELEVANCE_RATIO
+) -> list[dict]:
+    """Keep only results whose score is within *ratio* of the top score.
+
+    Applied before date-sorting so that low-relevance documents that merely
+    happen to be recent cannot displace the relevant newest match.  Never
+    returns an empty list: if the gate would drop everything (e.g. all
+    scores are zero) the original results are returned unchanged.
+    """
+    if not results:
+        return results
+    top_score = max(r.get("score", 0.0) for r in results)
+    if top_score <= 0:
+        return results
+    threshold = top_score * ratio
+    gated = [r for r in results if r.get("score", 0.0) >= threshold]
+    return gated or results
+
+
 class Searcher:
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
@@ -142,6 +169,7 @@ class Searcher:
             output = [r for r in output if r["score"] >= min_score]
 
         if sort_by_date:
+            output = _gate_by_relevance(output)
             output.sort(
                 key=lambda r: r.get("created", ""),
                 reverse=True,
@@ -409,6 +437,7 @@ class Searcher:
             merged = [r for r in merged if r["score"] >= min_score]
 
         if sort_by_date:
+            merged = _gate_by_relevance(merged)
             merged.sort(key=lambda r: r.get("created", ""), reverse=True)
         else:
             merged.sort(key=lambda r: r["score"], reverse=True)
