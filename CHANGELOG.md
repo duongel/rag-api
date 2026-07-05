@@ -1,3 +1,10 @@
+## [1.15.1](https://github.com/duongel/rag-api/compare/v1.15.0...v1.15.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **search:** gate low-relevance hits before date sort ([2586c2e](https://github.com/duongel/rag-api/commit/2586c2e22d8baf6b26574c51b85355b1fdd6b2b4))
+
 # [1.15.0](https://github.com/duongel/rag-api/compare/v1.14.0...v1.15.0) (2026-07-04)
 
 
